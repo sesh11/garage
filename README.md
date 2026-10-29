@@ -40,6 +40,13 @@ the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_RE
 settings include `GARAGE_MAX_NEW_ISSUES_PER_DAY`, `GARAGE_DISPATCH_INTERVAL`, `GARAGE_LOOKBACK`,
 `GARAGE_POLL_INTERVAL`, `GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, and `GARAGE_BRIDGE_TOKEN`.
 
+## Request bridge
+
+Bridge POSTs require a loopback `Host` (`127.0.0.1`, `localhost`, or `[::1]`, with any port). If `Origin` is present,
+it must match that host using `http`; `Sec-Fetch-Site`, if present, must be `same-origin` or `none`. Calls must come
+from a non-browser client without cross-origin metadata or from the same origin. `POST /api/requests` requires
+`Content-Type: application/json` (optional parameters such as `charset=utf-8` are accepted).
+
 Run the local checks with:
 
 ```sh

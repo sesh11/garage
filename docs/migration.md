@@ -70,3 +70,8 @@ Request issues now use the title prefix `Request: ` (formerly `Voice request: `)
 `POST /api/requests` with an ID, request text, aware `created_at`, and optional repository. If `GARAGE_BRIDGE_TOKEN` is
 set, callers must send `Authorization: Bearer <token>`. Duplicate IDs return the indexed existing issue without a
 second create; reporting-disabled, non-target, and capped requests return `{"issue": null}`.
+
+Bridge POSTs must use an allowed loopback `Host` (`127.0.0.1`, `localhost`, or `[::1]`, with any port). If `Origin` is
+present, it must be the matching `http://` origin; `Sec-Fetch-Site`, when present, must be `same-origin` or `none`.
+Requests need to come from a non-browser client without cross-origin metadata or from the same origin, and
+`POST /api/requests` requires `Content-Type: application/json` (parameters such as `charset=utf-8` are allowed).

@@ -10,7 +10,13 @@
   keeps its app-specific rules and prompt instructions outside generic Garage modules.
 - Root Ruff, mypy, and pytest checks cover the service and SDK.
 
-## Future
+## Not implemented yet
+
+- There is no triage, plan, release, or confirm workflow. `policy.auto_accept` is parsed but ignored.
+- Test kits only add text to the dispatch prompt; there is no test runner. Nothing has been hardware-tested.
+- There is no hosted CI.
+- The example `ambient-hw-test` command and checkout steps come from pre-split ambient-home and are moving to
+  ambient-devices; update the command and instructions when that branch lands with integrated install commands.
 
 - Multi-app packaging and onboarding beyond the example manifest.
 - Hosted or remote deployment and authentication beyond the loopback bridge's optional bearer token.

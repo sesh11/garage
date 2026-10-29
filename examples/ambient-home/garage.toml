@@ -27,6 +27,7 @@ prompt_rules = [
   "The repository is public: PRs, comments and reports must contain no secrets, tokens, personal data, or transcripts.",
 ]
 
+# PENDING: `ambient-hw-test` and these checkout steps come from the pre-split ambient-home and are moving to ambient-devices; update command/instructions once the ambient-devices branch lands with integrated install commands.
 [[test_kit]]
 name = "robot"
 command = "uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md"

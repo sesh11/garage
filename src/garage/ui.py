@@ -3,6 +3,7 @@
 import hmac
 import json
 import logging
+import ipaddress
 from pathlib import Path
 from datetime import datetime, timezone
 from collections.abc import Sequence
@@ -47,6 +48,7 @@ def create_app(
     reporter: IncidentReporter | None = None,
     bridge: RequestBridge | None = None,
     allowed_clients: frozenset[str] = frozenset({"127.0.0.1", "::1"}),
+    allowed_hosts: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"}),
 ) -> FastAPI:
     """Create the local Garage incidents UI and optional request bridge."""
     app = FastAPI(title="garage")
@@ -54,6 +56,7 @@ def create_app(
     app.state.monitor = None
     app.state.detector = detector
     index_path = Path(__file__).parent / "ui" / "index.html"
+    normalized_allowed_hosts = frozenset(host.lower() for host in allowed_hosts)
 
     @app.get("/")
     async def index() -> RedirectResponse:
@@ -114,9 +117,52 @@ def create_app(
             ],
         }
 
-    async def authorize(request: Request) -> JSONResponse | None:
+    def parse_authority(authority: str) -> tuple[str, str | None] | None:
+        if not authority or "@" in authority:
+            return None
+        if authority.startswith("["):
+            closing_bracket = authority.find("]")
+            if closing_bracket < 0:
+                return None
+            hostname = authority[1:closing_bracket]
+            suffix = authority[closing_bracket + 1 :]
+            if suffix and not suffix.startswith(":"):
+                return None
+            port = suffix[1:] if suffix else None
+            if port is not None and (not port.isascii() or not port.isdigit()):
+                return None
+            try:
+                hostname = str(ipaddress.IPv6Address(hostname))
+            except ipaddress.AddressValueError:
+                return None
+            return hostname.lower(), port
+
+        if authority.count(":") > 1:
+            return None
+        hostname, separator, port = authority.partition(":")
+        if not hostname or (separator and (not port or not port.isascii() or not port.isdigit())):
+            return None
+        return hostname.lower(), port if separator else None
+
+    def check_bridge_request(request: Request, *, require_json: bool = False) -> JSONResponse | None:
         if request.client is None or request.client.host not in allowed_clients:
             return JSONResponse(status_code=403, content={"error": "loopback only"})
+
+        host_header = request.headers.get("host")
+        host = parse_authority(host_header) if host_header is not None else None
+        if host is None or host[0] not in normalized_allowed_hosts:
+            return JSONResponse(status_code=403, content={"error": "unexpected host"})
+
+        origin = request.headers.get("origin")
+        if origin is not None:
+            scheme, separator, authority = origin.partition("://")
+            origin_host = parse_authority(authority) if separator and scheme.lower() == "http" else None
+            if origin_host is None or origin_host != host:
+                return JSONResponse(status_code=403, content={"error": "cross-origin request rejected"})
+        fetch_site = request.headers.get("sec-fetch-site")
+        if fetch_site is not None and fetch_site not in {"same-origin", "none"}:
+            return JSONResponse(status_code=403, content={"error": "cross-origin request rejected"})
+
         token = bridge.bridge_token if bridge is not None else None
         if token is not None:
             authorization = request.headers.get("authorization", "")
@@ -124,6 +170,10 @@ def create_app(
             supplied = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
             if not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
                 return JSONResponse(status_code=401, content={"error": "unauthorized"})
+        if require_json:
+            content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                return JSONResponse(status_code=415, content={"error": "content type must be application/json"})
         return None
 
     async def read_limited_body(request: Request) -> bytes | JSONResponse:
@@ -168,7 +218,7 @@ def create_app(
 
     @app.post("/api/requests", response_model=None)
     async def file_request(request: Request) -> dict[str, object] | JSONResponse:
-        denied = await authorize(request)
+        denied = check_bridge_request(request, require_json=True)
         if denied is not None:
             return denied
         body = await read_limited_body(request)
@@ -195,7 +245,7 @@ def create_app(
 
     @app.post("/api/requests/{number}/fixing", response_model=None)
     async def mark_fixing(number: str, request: Request) -> dict[str, bool] | JSONResponse:
-        denied = await authorize(request)
+        denied = check_bridge_request(request)
         if denied is not None:
             return denied
         body = await read_limited_body(request)
