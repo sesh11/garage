@@ -27,12 +27,31 @@ def issue_record(number: int = 1, labels: list[str] | None = None) -> IssueRecor
 
 def test_prompt_uses_manifest_check_test_kit_and_rules() -> None:
     settings = settings_from_env(example_manifest())
-    prompt = build_fix_prompt(issue_record(), "sesh11/ambient-home", settings.manifest)
+    prompt = build_fix_prompt(issue_record(42), "sesh11/ambient-home", settings.manifest)
     assert "uv run ruff check ." in prompt
-    assert "ambient-hw-test --markdown /tmp/ambient-hw-test-1.md" in prompt
+    assert (
+        ".venv/bin/ambient-reachy-hw-test --markdown /tmp/ambient-hw-test-42.md --json /tmp/ambient-hw-test-42.json"
+    ) in prompt
+    assert "ambient-home-fix-42/.venv/bin/ambient-home" in prompt
+    assert (
+        "uv pip install --python .venv/bin/python 'ambient-reachy @ "
+        "git+https://github.com/sesh11/ambient-devices.git@devin/1793294366-devices-split"
+        "#subdirectory=packages/ambient-reachy'"
+    ) in prompt
+    assert 'cp -Rn "$src"/. "$dst"/' in prompt
+    assert 'AMBIENT_DEVICES_FILE="$PWD/devices.example.toml"' in prompt
+    removal = next(line for line in prompt.splitlines() if "worktree remove" in line)
+    removal_command = removal.split("`")[1]
+    assert removal_command == (
+        "git -C ~/dev/ambient-home/ambient-home worktree remove ~/dev/ambient-home/ambient-home-fix-42"
+    )
+    assert "--force" not in removal_command
+    assert "never `--live`" in prompt
+    assert "OPENAI_API_KEY= DEVIN_API_KEY= DEVIN_ORG_ID= AMBIENT_GARAGE_URL=" in prompt
+    assert "Ask the user for approval" in prompt
     assert "my-mac" in prompt
     assert "https://github.com/sesh11/ambient-home.git" in prompt
-    assert "{issue}" not in prompt and "{outpost}" not in prompt and "{repo}" not in prompt
+    assert all(placeholder not in prompt for placeholder in ("{command}", "{issue}", "{outpost}", "{repo}"))
 
 
 @pytest.mark.asyncio

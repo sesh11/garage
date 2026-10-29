@@ -27,22 +27,24 @@ prompt_rules = [
   "The repository is public: PRs, comments and reports must contain no secrets, tokens, personal data, or transcripts.",
 ]
 
-# PENDING: `ambient-hw-test` and these checkout steps come from the pre-split ambient-home and are moving to ambient-devices; update command/instructions once the ambient-devices branch lands with integrated install commands.
+# Robot hardware test (app-specific). Device CLI from ambient-devices (package ambient-reachy); hub from ambient-home core.
 [[test_kit]]
 name = "robot"
-command = "uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md"
+command = "ambient-reachy-hw-test --markdown /tmp/ambient-hw-test-{issue}.md --json /tmp/ambient-hw-test-{issue}.json --hub-command \"$HOME/dev/ambient-home/ambient-home-fix-{issue}/.venv/bin/ambient-home\""
 runs_on = "outpost:my-mac"
 max_minutes = 3
 costs_money = false
 instructions = """
-Robot test. You are on a cloud VM and cannot reach the robot. If your change touches code that runs on the robot or the Mac (mic/audio, wake word, Live sessions, the Reachy daemon, head motion, LaunchAgents, hw_test) or the issue is an incident the robot reported, push your branch and start ONE child Devin session on Nithin's Mac outpost with platform "{outpost}" (if that name is rejected, the error lists the valid pool names; use the Mac one). Otherwise skip the robot test and say why in the PR. Give the child exactly these steps:
-  1. `cd ~/dev/ambient-home/ambient-home` is the always-on app's checkout: never switch its branch or edit files in it.
+Robot test. You are on a cloud VM and cannot reach the robot. If your change touches code that runs on the robot or the Mac (mic/audio, wake word, Live sessions, the Reachy daemon, head motion, LaunchAgents, the hardware test) or the issue is an incident the robot reported, push your branch and start ONE child Devin session on Nithin's Mac outpost with platform "{outpost}" (if that name is rejected, the error lists the valid pool names; use the Mac one). Otherwise skip the robot test and say why in the PR. Give the child exactly these steps:
+  1. `~/dev/ambient-home/ambient-home` is the always-on app's checkout: never switch its branch or edit files in it.
   2. `git -C ~/dev/ambient-home/ambient-home fetch origin <branch> && git -C ~/dev/ambient-home/ambient-home worktree add ~/dev/ambient-home/ambient-home-fix-{issue} FETCH_HEAD`
-  3. `cd ~/dev/ambient-home/ambient-home-fix-{issue} && cp ~/dev/ambient-home/ambient-home/.env .env && uv sync && mkdir -p .venv/lib/python3.11/site-packages/openwakeword/resources/models && cp -R ~/dev/ambient-home/ambient-home/.venv/lib/python3.11/site-packages/openwakeword/resources/models/. .venv/lib/python3.11/site-packages/openwakeword/resources/models/`
-  4. `uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md` (never `--live`; about 2 minutes; it pauses only ai.ambient-home.app and restores it).
-  5. Check ai.ambient-home.app is running again (`launchctl print gui/$(id -u)/ai.ambient-home.app`); if not, `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.ambient-home.app.plist`.
-  6. Report any `tool.completed` `dispatch_job` events written during the test under ~/Library/Logs/ambient-home/events (room audio can wake Alfred and start a real job).
-  7. `git -C ~/dev/ambient-home/ambient-home worktree remove --force ~/dev/ambient-home/ambient-home-fix-{issue}`, then send back the exit code and the full Markdown report.
+  3. `cd ~/dev/ambient-home/ambient-home-fix-{issue} && cp ~/dev/ambient-home/ambient-home/.env .env && uv sync && uv pip install --python .venv/bin/python 'ambient-reachy @ git+https://github.com/sesh11/ambient-devices.git@devin/1793294366-devices-split#subdirectory=packages/ambient-reachy'`. If the fresh .venv lacks the openwakeword models, copy them from the always-on .venv (read-only; never modify the source): `src=$(ls -d ~/dev/ambient-home/ambient-home/.venv/lib/python3.*/site-packages/openwakeword/resources/models) && dst=$(ls -d .venv/lib/python3.*/site-packages/openwakeword)/resources/models && mkdir -p "$dst" && cp -Rn "$src"/. "$dst"/`. The copied .env holds private secrets: never print, paste, or commit it. After this, never use plain `uv run` in this worktree (it removes the ad-hoc device package); call `.venv/bin/...` directly or `uv run --no-sync`.
+  4. Ask the user for approval before the physical run, because it pauses the always-on ai.ambient-home.app LaunchAgent. Without approval, do not run it and report "robot test not run (no approval)".
+  5. From the worktree, run (never `--live`; about 2 minutes; it pauses and restores only ai.ambient-home.app, never the Reachy daemon):
+     `AMBIENT_DATA_DIR="$PWD/.hwtest" AMBIENT_EVENTS_DIR="$PWD/.hwtest/events" AMBIENT_MEMORY_FILE="$PWD/.hwtest/memory.md" AMBIENT_DEVICES_FILE="$PWD/devices.example.toml" OPENAI_API_KEY= DEVIN_API_KEY= DEVIN_ORG_ID= AMBIENT_GARAGE_URL= .venv/bin/{command}`
+  6. Check ai.ambient-home.app is running again (`launchctl print gui/$(id -u)/ai.ambient-home.app`); if not, `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.ambient-home.app.plist`.
+  7. Inspect the isolated events under `.hwtest/events` for `tool.completed` events with `dispatch_job` written during the test (room audio can wake Alfred and start a real job) and report any.
+  8. `git -C ~/dev/ambient-home/ambient-home worktree remove ~/dev/ambient-home/ambient-home-fix-{issue}` WITHOUT `--force`; if it refuses because the worktree has changes, leave it in place and tell the user. Then send back the exit code, the JSON report, and the full Markdown report.
 Paste that Markdown report into the PR under a 'Robot test' heading.
 """
 
