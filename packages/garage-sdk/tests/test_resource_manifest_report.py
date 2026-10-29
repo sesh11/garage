@@ -75,7 +75,7 @@ def test_manifest_loads_ambient_home_example() -> None:
     assert manifest.signals.retention_days == 14
     assert manifest.detect.rules == "rules.toml"
     assert manifest.test_kit[0].name == "robot"
-    assert manifest.test_kit[0].instructions is None
+    assert manifest.test_kit[0].instructions is not None
     assert manifest.policy.needs_approval == ["triage", "plan", "release"]
 
 
