@@ -3,21 +3,22 @@
 from pathlib import Path
 from collections.abc import Callable
 
-from ambient_home.config import AmbientSettings
-from ambient_home.incidents.base import Detector
-from ambient_home.incidents.rules import RuleDetector
+from garage.incidents.base import Detector
+from garage.incidents.rules import RuleDetector
 
 
-DETECTORS: dict[str, Callable[[AmbientSettings], Detector]] = {
-    "rules": lambda settings: RuleDetector.from_file(
-        settings.incident_rules_path or Path(__file__).parent.parent / "incident_rules.toml"
-    ),
+DETECTORS: dict[str, Callable[[Path | None], Detector]] = {
+    "rules": lambda rules_path: RuleDetector.from_file(rules_path) if rules_path is not None else _missing_rules(),
 }
 
 
-def build_detector(settings: AmbientSettings) -> Detector:
+def _missing_rules() -> Detector:
+    raise ValueError("the rules detector needs [detect].rules in the manifest")
+
+
+def build_detector(name: str, rules_path: Path | None) -> Detector:
     """Build the configured detector, reporting registered choices on failure."""
-    factory = DETECTORS.get(settings.detector)
+    factory = DETECTORS.get(name)
     if factory is None:
-        raise ValueError(f"unknown detector {settings.detector!r}; valid names: {', '.join(sorted(DETECTORS))}")
-    return factory(settings)
+        raise ValueError(f"unknown detector {name!r}; valid names: {', '.join(sorted(DETECTORS))}")
+    return factory(rules_path)

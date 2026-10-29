@@ -6,8 +6,8 @@ import threading
 from datetime import datetime, timezone, timedelta
 from collections.abc import Callable
 
-from ambient_home.incidents.base import Detector, Incident
-from ambient_home.telemetry.events import Event, EventLog
+from garage_sdk.events import Event, EventLog
+from garage.incidents.base import Detector, Incident
 
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,12 @@ class IncidentMonitor:
         *,
         lookback: timedelta,
         debounce_s: float = 30.0,
+        sink: EventLog | None = None,
     ) -> None:
         """Register event notifications and configure evaluation timing."""
         self.detector = detector
         self.event_log = event_log
+        self.sink = sink or event_log
         self.lookback = lookback
         self.debounce_s = debounce_s
         self.latest: list[Incident] = []
@@ -45,6 +47,13 @@ class IncidentMonitor:
     def _on_event(self, event: Event) -> None:
         if event.component == "factory" or event.type == "app.heartbeat":
             return
+        self._schedule_poke()
+
+    def poke(self) -> None:
+        """Request an evaluation after an external event-log change."""
+        self._schedule_poke()
+
+    def _schedule_poke(self) -> None:
         with self._listener_lock:
             loop = self._loop
             dirty = self._dirty
@@ -73,7 +82,7 @@ class IncidentMonitor:
                 for incident in incidents:
                     if incident.fingerprint not in self._seen:
                         self._seen.add(incident.fingerprint)
-                        self.event_log.emit(
+                        self.sink.emit(
                             "incident.observed",
                             "factory",
                             fingerprint=incident.fingerprint,
@@ -91,7 +100,7 @@ class IncidentMonitor:
                             incident.count,
                             incident.threshold,
                         )
-                        self.event_log.emit(
+                        self.sink.emit(
                             "incident.ready",
                             "factory",
                             fingerprint=incident.fingerprint,

@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.scripts]
+garage = "garage.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest",
@@ -45,7 +48,6 @@ garage-sdk = { workspace = true }
 [tool.ruff]
 line-length = 119
 exclude = [".venv", "dist", "build", "**/__pycache__", "*.egg-info", ".mypy_cache", ".pytest_cache"]
-extend-exclude = ["src/garage/**", "tests/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "C4", "D"]
@@ -69,7 +71,7 @@ line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.12"
-files = ["packages/garage-sdk/src/"]
+files = ["src/garage/", "tests/", "packages/garage-sdk/src/"]
 ignore_missing_imports = true
 allow_subclassing_any = true
 strict = true
@@ -78,4 +80,4 @@ warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages/garage-sdk/tests"]
+testpaths = ["tests", "packages/garage-sdk/tests"]

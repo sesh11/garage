@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel
 
-from ambient_home.telemetry.events import Event
+from garage_sdk.events import Event
 
 
 Severity = Literal["low", "medium", "high", "critical"]

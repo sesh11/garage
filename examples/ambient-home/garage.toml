@@ -22,6 +22,10 @@ max_new_issues_per_day = 5
 interval = "1h"
 outpost = "my-mac"
 legacy_ledger = "~/.ambient-home/factory_dispatch.json"
+prompt_rules = [
+  "If pushing to origin fails with 403, push with `env -u GH_TOKEN git push https://github.com/{repo}.git <branch>`.",
+  "The repository is public: PRs, comments and reports must contain no secrets, tokens, personal data, or transcripts.",
+]
 
 [[test_kit]]
 name = "robot"
@@ -29,6 +33,17 @@ command = "uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md"
 runs_on = "outpost:my-mac"
 max_minutes = 3
 costs_money = false
+instructions = """
+Robot test. You are on a cloud VM and cannot reach the robot. If your change touches code that runs on the robot or the Mac (mic/audio, wake word, Live sessions, the Reachy daemon, head motion, LaunchAgents, hw_test) or the issue is an incident the robot reported, push your branch and start ONE child Devin session on Nithin's Mac outpost with platform "{outpost}" (if that name is rejected, the error lists the valid pool names; use the Mac one). Otherwise skip the robot test and say why in the PR. Give the child exactly these steps:
+  1. `cd ~/dev/ambient-home/ambient-home` is the always-on app's checkout: never switch its branch or edit files in it.
+  2. `git -C ~/dev/ambient-home/ambient-home fetch origin <branch> && git -C ~/dev/ambient-home/ambient-home worktree add ~/dev/ambient-home/ambient-home-fix-{issue} FETCH_HEAD`
+  3. `cd ~/dev/ambient-home/ambient-home-fix-{issue} && cp ~/dev/ambient-home/ambient-home/.env .env && uv sync && mkdir -p .venv/lib/python3.11/site-packages/openwakeword/resources/models && cp -R ~/dev/ambient-home/ambient-home/.venv/lib/python3.11/site-packages/openwakeword/resources/models/. .venv/lib/python3.11/site-packages/openwakeword/resources/models/`
+  4. `uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md` (never `--live`; about 2 minutes; it pauses only ai.ambient-home.app and restores it).
+  5. Check ai.ambient-home.app is running again (`launchctl print gui/$(id -u)/ai.ambient-home.app`); if not, `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.ambient-home.app.plist`.
+  6. Report any `tool.completed` `dispatch_job` events written during the test under ~/Library/Logs/ambient-home/events (room audio can wake Alfred and start a real job).
+  7. `git -C ~/dev/ambient-home/ambient-home worktree remove --force ~/dev/ambient-home/ambient-home-fix-{issue}`, then send back the exit code and the full Markdown report.
+Paste that Markdown report into the PR under a 'Robot test' heading.
+"""
 
 [policy]
 needs_approval = ["triage", "plan", "release"]

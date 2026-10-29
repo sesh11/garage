@@ -1,35 +1,14 @@
-"""Minimal GitHub Issues client for the factory reporter."""
+"""Minimal GitHub Issues client for Garage."""
 
 import re
-from datetime import datetime
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel
+
+from garage.tracker import IssueRecord
 
 
-_MARKER = re.compile(r"<!--\s*factory-(?P<key>[a-z-]+):\s*(?P<value>[^\s>]+)\s*-->")
 _NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
-
-
-class IssueRecord(BaseModel):
-    """The parts of a GitHub issue the factory tracks."""
-
-    number: int
-    url: str
-    state: str
-    title: str
-    body: str
-    labels: list[str]
-    created_at: datetime
-    closed_at: datetime | None = None
-
-    def marker(self, key: str) -> str | None:
-        """Return the value of a hidden ``<!-- factory-key: value -->`` marker in the body."""
-        for match in _MARKER.finditer(self.body):
-            if match.group("key") == key:
-                return match.group("value")
-        return None
 
 
 def _record(payload: dict[str, object]) -> IssueRecord:

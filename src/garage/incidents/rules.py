@@ -9,14 +9,14 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ValidationError, field_validator, model_validator
 
-from ambient_home.incidents.base import (
+from garage_sdk.events import Event
+from garage.incidents.base import (
     Incident,
     Severity,
     parse_duration,
     make_fingerprint,
     normalize_message,
 )
-from ambient_home.telemetry.events import Event
 
 
 logger = logging.getLogger(__name__)
