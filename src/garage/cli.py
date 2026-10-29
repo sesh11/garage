@@ -91,7 +91,7 @@ def _legacy_ledger_path(settings: GarageSettings) -> Path | None:
     return path if path.is_absolute() else settings.manifest_dir / path
 
 
-def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False) -> Dispatcher | None:
+def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False, offline: bool = False) -> Dispatcher | None:
     """Return the dispatcher when enabled and configured."""
     if not settings.dispatch and not dry_run:
         return None
@@ -108,7 +108,7 @@ def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False) -> Disp
         logger.warning("GARAGE_DISPATCH is on but %s is not set; not dispatching.", ", ".join(missing))
         return None
     tracker: Tracker = (
-        _OfflineTracker(settings.repo) if dry_run else GitHubIssues(settings.repo, settings.github_token)
+        _OfflineTracker(settings.repo) if offline else GitHubIssues(settings.repo, settings.github_token)
     )
     agent = DevinClient(
         settings.devin_api_key or "",
@@ -151,13 +151,13 @@ def _event_log(settings: GarageSettings) -> EventLog:
     return EventLog(settings.events_dir, retention_days=settings.retention_days)
 
 
-async def _report(settings: GarageSettings, since: str, dry_run: bool) -> list[str]:
+async def _report(settings: GarageSettings, since: str, dry_run: bool, offline: bool = False) -> list[str]:
     now = datetime.now(timezone.utc)
     event_log = _event_log(settings)
     detector = build_detector(settings.detector, settings.rules_path)
     start = now - parse_duration(since)
     incidents = await detect_over(detector, event_log.read(start, now), start, now)
-    issues: Tracker = _OfflineTracker(settings.repo) if dry_run else GitHubIssues(settings.repo, settings.github_token)
+    issues: Tracker = _OfflineTracker(settings.repo) if offline else GitHubIssues(settings.repo, settings.github_token)
     reporter = IncidentReporter(
         issues,
         max_new_per_day=settings.max_new_issues_per_day,
@@ -256,11 +256,13 @@ def main(argv: list[str] | None = None) -> int:
     report_parser = subparsers.add_parser("report", help="report incidents once")
     report_parser.add_argument("--manifest", type=Path)
     report_parser.add_argument("--dry-run", action="store_true", help="print actions without changing issues")
+    report_parser.add_argument("--offline", action="store_true", help="preview without checking existing issues")
     report_parser.add_argument("--since", default="24h", help="lookback such as 6h or 7d")
 
     dispatch_parser = subparsers.add_parser("dispatch", help="dispatch ready issues once")
     dispatch_parser.add_argument("--manifest", type=Path)
     dispatch_parser.add_argument("--dry-run", action="store_true", help="print actions without starting sessions")
+    dispatch_parser.add_argument("--offline", action="store_true", help="preview without checking existing issues")
     dispatch_parser.add_argument("--show-prompt", action="store_true", help="print each session prompt")
 
     serve_parser = subparsers.add_parser("serve", help="serve the local incidents UI and request bridge")
@@ -272,18 +274,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = settings_from_env(args.manifest)
         if args.command == "report":
-            if not args.dry_run and not settings.github_token:
+            dry_run = args.dry_run or args.offline
+            if not dry_run and not settings.github_token:
                 print("GARAGE_GITHUB_TOKEN is not set; use --dry-run or add the token to .env", file=sys.stderr)
                 return 2
-            actions = asyncio.run(_report(settings, args.since, args.dry_run))
-            prefix = "[dry run] " if args.dry_run else ""
+            if args.offline:
+                print("Offline mode: existing issues aren't checked.")
+            actions = asyncio.run(_report(settings, args.since, dry_run, offline=args.offline))
+            prefix = "[dry run] " if dry_run else ""
             for action in actions:
                 print(f"{prefix}{action}")
             if not actions:
                 print(f"{prefix}nothing to post for {settings.repo}")
             return 0
         if args.command == "dispatch":
-            dispatcher = build_dispatcher(settings, dry_run=args.dry_run)
+            dry_run = args.dry_run or args.offline
+            if args.offline:
+                print("Offline mode: existing issues aren't checked.")
+            dispatcher = build_dispatcher(settings, dry_run=dry_run, offline=args.offline)
             if dispatcher is None:
                 print(
                     "needs GARAGE_GITHUB_TOKEN, DEVIN_API_KEY and DEVIN_ORG_ID in .env (or use --dry-run)",
@@ -291,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 2
             actions = asyncio.run(_dispatch_once(dispatcher, args.show_prompt))
-            prefix = "[dry run] " if args.dry_run else ""
+            prefix = "[dry run] " if dry_run else ""
             for action in actions:
                 print(f"{prefix}{action}")
             if not actions:

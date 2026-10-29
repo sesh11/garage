@@ -15,16 +15,20 @@ class FakeTracker:
         self.comments: list[tuple[int, str]] = []
         self.creates: list[tuple[str, str, list[str]]] = []
         self.mutations: list[str] = []
+        self.calls: list[str] = []
         self.labels: dict[str, tuple[str, str]] = {}
         self.fail_create = False
 
     async def ensure_labels(self, labels: dict[str, tuple[str, str]]) -> None:
+        self.calls.append("ensure_labels")
         self.labels.update(labels)
 
     async def list_issues(self, label: str) -> list[IssueRecord]:
+        self.calls.append(f"list_issues:{label}")
         return [issue for issue in self.issues if label in issue.labels]
 
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
+        self.calls.append("create_issue")
         if self.fail_create:
             raise RuntimeError("tracker unavailable")
         self.creates.append((title, body, labels))
@@ -49,6 +53,7 @@ class FakeTracker:
         body: str | None = None,
         state: str | None = None,
     ) -> IssueRecord:
+        self.calls.append("update_issue")
         issue = next(item for item in self.issues if item.number == number)
         update: dict[str, object] = {}
         if title is not None:
@@ -63,16 +68,19 @@ class FakeTracker:
         return updated
 
     async def add_labels(self, number: int, labels: list[str]) -> None:
+        self.calls.append("add_labels")
         issue = next(item for item in self.issues if item.number == number)
         issue.labels = list(dict.fromkeys([*issue.labels, *labels]))
         self.mutations.append("add_labels")
 
     async def remove_label(self, number: int, label: str) -> None:
+        self.calls.append("remove_label")
         issue = next(item for item in self.issues if item.number == number)
         issue.labels = [item for item in issue.labels if item != label]
         self.mutations.append("remove_label")
 
     async def comment(self, number: int, body: str) -> None:
+        self.calls.append("comment")
         self.comments.append((number, body))
         self.mutations.append("comment")
 
@@ -81,6 +89,7 @@ class FakeAgent:
     def __init__(self) -> None:
         self.created: list[tuple[str, dict[str, object]]] = []
         self.states: dict[str, SessionState] = {}
+        self.calls: list[str] = []
 
     async def create_session(
         self,
@@ -92,6 +101,7 @@ class FakeAgent:
         repos: list[str] | None = None,
         platform: str | None = None,
     ) -> CreatedSession:
+        self.calls.append("create_session")
         self.created.append(
             (
                 prompt,
@@ -113,6 +123,7 @@ class FakeAgent:
         )
 
     async def get_session(self, session_id: str) -> SessionState:
+        self.calls.append("get_session")
         return self.states[session_id]
 
     @staticmethod

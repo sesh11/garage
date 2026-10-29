@@ -61,6 +61,11 @@ Dispatch migrates the legacy ledger once: if the Garage ledger is absent and the
 it is read using the existing schema; the next save writes the new Garage ledger and never modifies the legacy file.
 Fix prompts now take checks, test-kit instructions, and app-specific prompt rules from the manifest.
 
+`garage report --dry-run` and `garage dispatch --dry-run` read existing GitHub issues for deduplication and preview,
+but do not mutate issues or call Devin. The reads work on public repositories without a token. Add `--offline` to
+either command to imply dry-run and avoid network calls entirely; offline mode prints that existing issues are not
+checked, so its preview cannot deduplicate reports or list ready dispatch issues.
+
 Request issues now use the title prefix `Request: ` (formerly `Voice request: `). The optional loopback bridge accepts
 `POST /api/requests` with an ID, request text, aware `created_at`, and optional repository. If `GARAGE_BRIDGE_TOKEN` is
 set, callers must send `Authorization: Bearer <token>`. Duplicate IDs return the indexed existing issue without a

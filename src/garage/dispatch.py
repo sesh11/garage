@@ -274,6 +274,8 @@ class Dispatcher:
 
     async def _follow_up(self, ledger: DispatchLedger) -> list[str]:
         done: list[str] = []
+        if self.dry_run:
+            return done
         for record in ledger.records:
             if record.done or not record.labeled:
                 continue

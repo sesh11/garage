@@ -25,7 +25,14 @@ Configure an app with a manifest, then run:
 garage serve --manifest examples/ambient-home/garage.toml
 garage report --manifest examples/ambient-home/garage.toml --dry-run
 garage dispatch --manifest examples/ambient-home/garage.toml --dry-run --show-prompt
+garage report --manifest examples/ambient-home/garage.toml --offline
+garage dispatch --manifest examples/ambient-home/garage.toml --offline
 ```
+
+`--dry-run` reads existing GitHub issues to preview deduplication or ready dispatches, but does not mutate issues or
+call Devin; public repositories can be read without a token. `--offline` implies dry-run and makes no network calls.
+Offline previews do not check existing issues, so report may show already-filed incidents as new and dispatch has no
+ready issues to list.
 
 `GARAGE_MANIFEST` selects the default manifest. `GARAGE_REPO`, `GARAGE_EVENTS_DIR`, and `GARAGE_DATA_DIR` override
 the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_REPORT` and `GARAGE_DISPATCH`;
