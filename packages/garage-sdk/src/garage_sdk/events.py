@@ -9,7 +9,8 @@ from collections.abc import Callable
 
 from pydantic import Field, BaseModel, field_validator
 
-from ambient_home.telemetry.scrub import scrub_data
+from .scrub import scrub_data
+from .resource import Resource
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class Event(BaseModel):
     component: str
     level: EventLevel = "info"
     data: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    resource: Resource | None = None
 
     @field_validator("ts")
     @classmethod
@@ -42,11 +44,13 @@ class EventLog:
         *,
         retention_days: int = 14,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        resource: Resource | None = None,
     ) -> None:
         """Configure the event directory and injected clock."""
         self.directory = directory
         self.retention_days = retention_days
         self.clock = clock
+        self.resource = resource
         self._lock = threading.Lock()
         self._listeners: list[Callable[[Event], None]] = []
         self._last_pruned_day: date | None = None
@@ -67,6 +71,7 @@ class EventLog:
                 component=component,
                 level=level,
                 data=scrub_data(data),
+                resource=self.resource,
             )
             day = event.ts.date()
             with self._lock:
@@ -76,7 +81,12 @@ class EventLog:
                 self.directory.mkdir(parents=True, exist_ok=True)
                 path = self.directory / f"{day:%Y-%m-%d}.jsonl"
                 with path.open("a", encoding="utf-8") as handle:
-                    handle.write(event.model_dump_json() + "\n")
+                    serialized = (
+                        event.model_dump_json(exclude={"resource"})
+                        if event.resource is None
+                        else event.model_dump_json()
+                    )
+                    handle.write(serialized + "\n")
                 listeners = list(self._listeners)
             for listener in listeners:
                 try:

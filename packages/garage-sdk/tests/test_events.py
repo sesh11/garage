@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from ambient_home.telemetry import EventLog, emit, configure, get_event_log
+from garage_sdk import EventLog, emit, configure, get_event_log
 
 
 @pytest.fixture(autouse=True)
@@ -91,3 +91,47 @@ def test_listeners_are_called_and_listener_errors_are_swallowed(tmp_path) -> Non
 
     assert received == [event]
     assert log.read(datetime.now(timezone.utc) - timedelta(minutes=1)) == [event]
+
+
+def test_legacy_event_line_parses_without_resource(tmp_path) -> None:
+    directory = tmp_path / "events"
+    directory.mkdir()
+    path = directory / "2025-01-01.jsonl"
+    path.write_text(
+        '{"ts":"2025-01-01T00:00:00Z","type":"legacy","component":"old","level":"info","data":{"ok":true}}\n',
+        encoding="utf-8",
+    )
+    log = EventLog(directory)
+
+    events = log.read(datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    assert len(events) == 1
+    assert events[0].resource is None
+
+
+def test_event_without_resource_keeps_legacy_jsonl_bytes(tmp_path) -> None:
+    log = EventLog(tmp_path / "events", clock=lambda: datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    log.emit("event", "component")
+
+    assert (tmp_path / "events" / "2025-01-01.jsonl").read_bytes() == (
+        b'{"ts":"2025-01-01T00:00:00Z","type":"event","component":"component","level":"info","data":{}}\n'
+    )
+
+
+def test_event_log_stamps_resource_on_events(tmp_path) -> None:
+    from garage_sdk import Resource
+
+    resource = Resource(app="app", version="1.2.3+abcdef0", install="abcd1234")
+    log = EventLog(
+        tmp_path / "events",
+        clock=lambda: datetime(2025, 1, 1, tzinfo=timezone.utc),
+        resource=resource,
+    )
+
+    event = log.emit("event", "component")
+
+    assert event is not None
+    assert event.resource == resource
+    raw = (tmp_path / "events" / "2025-01-01.jsonl").read_text(encoding="utf-8")
+    assert '"resource":{"app":"app","version":"1.2.3+abcdef0","install":"abcd1234"}' in raw

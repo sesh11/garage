@@ -1,13 +1,21 @@
 """Structured local telemetry."""
 
-from ambient_home.telemetry.scrub import DROPPED_KEYS, scrub_data, scrub_text
-from ambient_home.telemetry.events import Event, EventLog, emit, configure, get_event_log
+from .scrub import DROPPED_KEYS, scrub_data, scrub_text
+from .events import Event, EventLog, emit, configure, get_event_log
+from .resource import Resource
+from .logging_bridge import EventLoggingHandler
+
+
+__version__ = "0.1.0"
 
 
 __all__ = [
     "DROPPED_KEYS",
     "Event",
     "EventLog",
+    "EventLoggingHandler",
+    "Resource",
+    "__version__",
     "configure",
     "emit",
     "get_event_log",

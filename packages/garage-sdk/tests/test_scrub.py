@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ambient_home.telemetry import EventLog, scrub_text
+from garage_sdk import EventLog, scrub_text
 
 
 def test_emit_scrubs_sensitive_values_and_drops_content_fields(tmp_path) -> None:

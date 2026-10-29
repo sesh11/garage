@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garage"
+version = "0.1.0"
+description = "Local incident monitoring and software dispatch service"
+requires-python = ">=3.11"
+dependencies = [
+    "garage-sdk",
+    "httpx",
+    "pydantic",
+    "python-dotenv",
+    "fastapi",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff==0.15.20",
+    "mypy==2.2.0",
+    "pre-commit",
+    "build",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+garage = ["ui/index.html"]
+
+[tool.uv.workspace]
+members = ["packages/garage-sdk"]
+
+[tool.uv.sources]
+garage-sdk = { workspace = true }
+
+[tool.ruff]
+line-length = 119
+exclude = [".venv", "dist", "build", "**/__pycache__", "*.egg-info", ".mypy_cache", ".pytest_cache"]
+extend-exclude = ["src/garage/**", "tests/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "C4", "D"]
+ignore = ["E501", "D100", "D203", "D213"]
+
+[tool.ruff.lint.isort]
+length-sort = true
+lines-after-imports = 2
+no-lines-before = ["standard-library", "local-folder"]
+known-local-folder = ["garage", "garage_sdk"]
+split-on-trailing-comma = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**/*.py" = ["D"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["packages/garage-sdk/src/"]
+ignore_missing_imports = true
+allow_subclassing_any = true
+strict = true
+show_error_codes = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["packages/garage-sdk/tests"]
