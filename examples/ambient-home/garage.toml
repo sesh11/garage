@@ -19,6 +19,7 @@ request_attribution = "Filed automatically by the ambient-home factory."
 max_new_issues_per_day = 5
 
 [dispatch]
+# base_branch = "main"   # branch fixes start from and PRs target
 interval = "1h"
 outpost = "my-mac"
 legacy_ledger = "~/.ambient-home/factory_dispatch.json"

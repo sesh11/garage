@@ -4,7 +4,7 @@ import tomllib
 from typing import Literal
 from pathlib import Path
 
-from pydantic import Field, BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import Field, BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 
 class AppSection(BaseModel):
@@ -61,9 +61,18 @@ class DispatchSection(BaseModel):
 
     agent: str = "devin"
     interval: str = "1h"
+    base_branch: str = "main"
     outpost: str | None = None
     legacy_ledger: str | None = None
     prompt_rules: list[str] = Field(default_factory=list)
+
+    @field_validator("base_branch")
+    @classmethod
+    def base_branch_must_not_be_blank(cls, value: str) -> str:
+        """Reject a whitespace-only pull request base branch."""
+        if not value.strip():
+            raise ValueError("base_branch must not be empty")
+        return value
 
 
 class PolicySection(BaseModel):

@@ -29,6 +29,7 @@ def issue_record(number: int = 1, labels: list[str] | None = None) -> IssueRecor
 def test_prompt_uses_manifest_check_test_kit_and_rules() -> None:
     settings = settings_from_env(example_manifest())
     prompt = build_fix_prompt(issue_record(42), "sesh11/ambient-home", settings.manifest)
+    assert "Branch off the latest main and open ONE pull request into main" in prompt
     assert "uv run ruff check ." in prompt
     assert (
         ".venv/bin/ambient-reachy-hw-test --markdown /tmp/ambient-hw-test-42.md --json /tmp/ambient-hw-test-42.json"
@@ -53,6 +54,18 @@ def test_prompt_uses_manifest_check_test_kit_and_rules() -> None:
     assert "my-mac" in prompt
     assert "https://github.com/sesh11/ambient-home.git" in prompt
     assert all(placeholder not in prompt for placeholder in ("{command}", "{issue}", "{outpost}", "{repo}"))
+
+
+def test_prompt_uses_configured_base_branch() -> None:
+    settings = settings_from_env(example_manifest())
+    manifest = settings.manifest.model_copy(
+        update={"dispatch": settings.manifest.dispatch.model_copy(update={"base_branch": "feature/x"})}
+    )
+
+    prompt = build_fix_prompt(issue_record(42), "sesh11/ambient-home", manifest)
+
+    assert "Branch off the latest feature/x and open ONE pull request into feature/x" in prompt
+    assert "Never merge, never push directly to feature/x or main, never deploy." in prompt
 
 
 @pytest.mark.asyncio

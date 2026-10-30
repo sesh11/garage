@@ -22,7 +22,7 @@ from garage_sdk.report import (
 from garage_sdk.report import (
     TestReport as GarageTestReport,
 )
-from garage_sdk.manifest import PolicySection, load_manifest
+from garage_sdk.manifest import Manifest, PolicySection, load_manifest
 from garage_sdk.resource import install_id, version_stamp
 from garage_sdk.logging_bridge import EventLoggingHandler
 
@@ -82,6 +82,17 @@ def test_manifest_loads_ambient_home_example() -> None:
     )
     assert manifest.test_kit[0].instructions is not None
     assert manifest.policy.needs_approval == ["triage", "plan", "release"]
+
+
+def test_dispatch_base_branch_defaults_to_main_and_rejects_blank() -> None:
+    root = Path(__file__).parents[3]
+    manifest = load_manifest(root / "examples" / "ambient-home" / "garage.toml")
+    assert manifest.dispatch.base_branch == "main"
+    for base_branch in ("", " ", "\t"):
+        with pytest.raises(ValueError, match="base_branch must not be empty"):
+            invalid_manifest = manifest.model_dump()
+            invalid_manifest["dispatch"]["base_branch"] = base_branch
+            Manifest.model_validate(invalid_manifest)
 
 
 @pytest.mark.parametrize(
