@@ -1,5 +1,7 @@
 # mypy: disable-error-code="no-untyped-def"
 
+from types import SimpleNamespace
+from pathlib import Path
 from datetime import datetime, timezone
 
 from conftest import FakeAgent, FakeTracker, example_manifest
@@ -7,6 +9,7 @@ from conftest import FakeAgent, FakeTracker, example_manifest
 from garage import cli
 from garage.report import READY, INCIDENT
 from garage.tracker import IssueRecord
+from garage.requests import RequestBridge
 from garage.settings import settings_from_env
 from garage_sdk.events import EventLog
 
@@ -133,3 +136,47 @@ def test_load_dotenv_runs_before_environment_resolution(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_report", lambda *args: None)
     assert cli.main(["report", "--dry-run"]) == 1
     assert calls == ["dotenv", "settings"]
+
+
+def test_serve_connects_request_bridge_to_dispatcher(monkeypatch) -> None:
+    settings = settings_from_env(example_manifest())
+    source = SimpleNamespace(directory=Path("/unused"))
+    app = SimpleNamespace(
+        router=SimpleNamespace(on_startup=[], on_shutdown=[]),
+        state=SimpleNamespace(),
+    )
+    request_logger = object()
+
+    class FakeDispatcher:
+        def poke(self) -> None:
+            return
+
+        def request_status(self, number: int) -> dict[str, object]:
+            return {"state": "working", "session_url": None, "pr_url": None}
+
+    dispatcher = FakeDispatcher()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_event_log", lambda _: source)
+    monkeypatch.setattr(cli, "EventLog", lambda *_: source)
+    monkeypatch.setattr(cli, "configure", lambda _: None)
+    monkeypatch.setattr(cli, "build_detector", lambda *_: object())
+    monkeypatch.setattr(
+        cli,
+        "IncidentMonitor",
+        lambda *_args, **_kwargs: SimpleNamespace(add_listener=lambda _: None),
+    )
+    monkeypatch.setattr(cli, "build_reporters", lambda _: (None, request_logger))
+    monkeypatch.setattr(cli, "build_dispatcher", lambda _: dispatcher)
+    monkeypatch.setattr(
+        cli,
+        "create_app",
+        lambda **kwargs: captured.update(kwargs) or app,
+    )
+    monkeypatch.setattr("uvicorn.run", lambda *_args, **_kwargs: None)
+
+    assert cli._serve(settings, "127.0.0.1", 8770) == 0
+
+    bridge = captured["bridge"]
+    assert isinstance(bridge, RequestBridge)
+    assert bridge.on_filed == dispatcher.poke
+    assert bridge.status == dispatcher.request_status

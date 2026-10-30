@@ -243,6 +243,21 @@ def create_app(
             return JSONResponse(status_code=502, content={"error": "issue tracker request failed"})
         return issue_response(issue)
 
+    @app.get("/api/requests/{number}", response_model=None)
+    async def request_status(number: str, request: Request) -> dict[str, object] | JSONResponse:
+        denied = check_bridge_request(request)
+        if denied is not None:
+            return denied
+        try:
+            issue_number = int(number)
+        except ValueError:
+            return JSONResponse(status_code=422, content={"error": "number must be at least 1"})
+        if issue_number < 1:
+            return JSONResponse(status_code=422, content={"error": "number must be at least 1"})
+        if bridge is None or not bridge.enabled:
+            return JSONResponse(status_code=409, content={"error": "request reporting is disabled"})
+        return bridge.status_of(issue_number)
+
     @app.post("/api/requests/{number}/fixing", response_model=None)
     async def mark_fixing(number: str, request: Request) -> dict[str, bool] | JSONResponse:
         denied = check_bridge_request(request)

@@ -210,7 +210,12 @@ def _serve(settings: GarageSettings, host: str, port: int) -> int:
     if reporter is not None:
         monitor.add_listener(reporter.notify)
     dispatcher = build_dispatcher(settings)
-    bridge = RequestBridge(request_logger, bridge_token=settings.bridge_token)
+    bridge = RequestBridge(
+        request_logger,
+        bridge_token=settings.bridge_token,
+        on_filed=dispatcher.poke if dispatcher is not None else None,
+        status=dispatcher.request_status if dispatcher is not None else None,
+    )
     app = create_app(event_log=source, detector=detector, reporter=reporter, bridge=bridge)
     app.state.monitor = monitor
 

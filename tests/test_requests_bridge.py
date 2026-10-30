@@ -13,7 +13,7 @@ from garage.ui import MAX_REQUEST_BODY_BYTES, create_app
 from garage_sdk import configure
 from garage.report import REQUEST, RequestLogger
 from garage.tracker import IssueRecord
-from garage.requests import RequestBridge
+from garage.requests import Request, RequestBridge
 from garage_sdk.events import EventLog
 
 
@@ -35,12 +35,12 @@ def loopback_client(app, **kwargs):
     return TestClient(app, base_url=BASE_URL, **kwargs)
 
 
-def make_app(tracker: FakeTracker | None = None, token: str | None = None):
+def make_app(tracker: FakeTracker | None = None, token: str | None = None, *, status=None):
     logger = RequestLogger(tracker) if tracker is not None else None
     return create_app(
         event_log=None,
         detector=None,
-        bridge=RequestBridge(logger, bridge_token=token),
+        bridge=RequestBridge(logger, bridge_token=token, status=status),
         allowed_clients=frozenset({"testclient", "127.0.0.1", "::1"}),
     )
 
@@ -75,6 +75,94 @@ def test_auth_loopback_validation_and_disabled_responses() -> None:
     response = remote.post("/api/requests", json=payload(), headers={"Authorization": "Bearer secret"})
     assert response.status_code == 403
     assert response.json() == {"error": "loopback only"}
+
+
+@pytest.mark.asyncio
+async def test_bridge_calls_on_filed_only_when_an_issue_is_created() -> None:
+    filed: list[None] = []
+    request = Request.model_validate(payload())
+    bridge = RequestBridge(RequestLogger(FakeTracker()), on_filed=lambda: filed.append(None))
+
+    issue = await bridge.file(request)
+
+    assert issue is not None
+    assert filed == [None]
+
+    capped = RequestBridge(RequestLogger(FakeTracker(), max_per_day=0), on_filed=lambda: filed.append(None))
+    assert await capped.file(request) is None
+    assert filed == [None]
+
+
+def test_request_status_returns_loopback_shape_without_json_requirement() -> None:
+    def status(number: int) -> dict[str, object]:
+        return {
+            "state": "working",
+            "session_url": f"https://app.devin.ai/sessions/{number}",
+            "pr_url": None,
+        }
+
+    with loopback_client(make_app(FakeTracker(), status=status)) as client:
+        response = client.get("/api/requests/42")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "number": 42,
+        "dispatch": True,
+        "state": "working",
+        "session_url": "https://app.devin.ai/sessions/42",
+        "pr_url": None,
+    }
+
+
+def test_request_status_falls_back_to_queued_when_dispatch_is_unavailable() -> None:
+    with loopback_client(make_app(FakeTracker())) as client:
+        response = client.get("/api/requests/42")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "number": 42,
+        "dispatch": False,
+        "state": "queued",
+        "session_url": None,
+        "pr_url": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "headers", "client_address", "error"),
+    [
+        ("/api/requests/42", {"Host": "evil.example:8770"}, ("127.0.0.1", 10000), "unexpected host"),
+        ("/api/requests/42", {}, ("192.0.2.10", 10000), "loopback only"),
+    ],
+)
+def test_request_status_rejects_non_loopback_client_or_host(
+    path: str, headers: dict[str, str], client_address: tuple[str, int], error: str
+) -> None:
+    app = make_app(FakeTracker(), status=lambda _: {"state": "queued", "session_url": None, "pr_url": None})
+    with loopback_client(app, client=client_address) as client:
+        response = client.get(path, headers=headers)
+    assert response.status_code == 403
+    assert response.json() == {"error": error}
+
+
+def test_request_status_validation_disabled_and_token_requirements() -> None:
+    with loopback_client(make_app()) as client:
+        assert client.get("/api/requests/invalid").status_code == 422
+        assert client.get("/api/requests/0").status_code == 422
+        disabled = client.get("/api/requests/1")
+        assert disabled.status_code == 409
+        assert disabled.json() == {"error": "request reporting is disabled"}
+
+    app = make_app(FakeTracker(), token="secret", status=lambda _: {"state": "queued"})
+    with loopback_client(app) as client:
+        assert client.get("/api/requests/1").status_code == 401
+        response = client.get("/api/requests/1", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "number": 1,
+        "dispatch": True,
+        "state": "queued",
+    }
 
 
 def _assert_rejected_without_tracker_calls(

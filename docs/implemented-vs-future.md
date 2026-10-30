@@ -12,6 +12,7 @@
 
 ## Not implemented yet
 
+- GitHub sign-in (GitHub App/OAuth) and choosing repositories; Garage currently works one repository from its manifest.
 - There is no triage, plan, release, or confirm workflow. `policy.auto_accept` is parsed but ignored.
 - Test kits only add text to the dispatch prompt; there is no test runner.
 - The robot kit now targets `ambient-reachy-hw-test` from ambient-devices against an isolated core worktree. It is prompt

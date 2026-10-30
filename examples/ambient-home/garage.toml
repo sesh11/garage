@@ -43,7 +43,7 @@ Robot test. You are on a cloud VM and cannot reach the robot. If your change tou
   5. From the worktree, run (never `--live`; about 2 minutes; it pauses and restores only ai.ambient-home.app, never the Reachy daemon):
      `AMBIENT_DATA_DIR="$PWD/.hwtest" AMBIENT_EVENTS_DIR="$PWD/.hwtest/events" AMBIENT_MEMORY_FILE="$PWD/.hwtest/memory.md" AMBIENT_DEVICES_FILE="$PWD/devices.example.toml" OPENAI_API_KEY= DEVIN_API_KEY= DEVIN_ORG_ID= AMBIENT_GARAGE_URL= .venv/bin/{command}`
   6. Check ai.ambient-home.app is running again (`launchctl print gui/$(id -u)/ai.ambient-home.app`); if not, `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.ambient-home.app.plist`.
-  7. Inspect the isolated events under `.hwtest/events` for `tool.completed` events with `dispatch_job` written during the test (room audio can wake Alfred and start a real job) and report any.
+  7. Inspect the isolated events under `.hwtest/events` for `tool.completed` events with `dispatch_job` or `file_request` written during the test (room audio can wake Alfred and start a real job) and report any.
   8. `git -C ~/dev/ambient-home/ambient-home worktree remove ~/dev/ambient-home/ambient-home-fix-{issue}` WITHOUT `--force`; if it refuses because the worktree has changes, leave it in place and tell the user. Then send back the exit code, the JSON report, and the full Markdown report.
 Paste that Markdown report into the PR under a 'Robot test' heading.
 """

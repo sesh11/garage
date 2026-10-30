@@ -1,6 +1,7 @@
 """Request filing models and bridge."""
 
 import asyncio
+from collections.abc import Callable
 
 from pydantic import BaseModel, AwareDatetime
 
@@ -25,10 +26,14 @@ class RequestBridge:
         logger: RequestLogger | None,
         *,
         bridge_token: str | None = None,
+        on_filed: Callable[[], None] | None = None,
+        status: Callable[[int], dict[str, object]] | None = None,
     ) -> None:
         """Configure the optional request logger and bridge authentication token."""
         self.logger = logger
         self.bridge_token = bridge_token
+        self.on_filed = on_filed
+        self.status = status
         self._lock = asyncio.Lock()
 
     @property
@@ -41,7 +46,23 @@ class RequestBridge:
         if self.logger is None or not self.logger.wants(request.repository):
             return None
         async with self._lock:
-            return await self.logger.file(request)
+            issue = await self.logger.file(request)
+        if issue is not None and self.on_filed is not None:
+            self.on_filed()
+        return issue
+
+    def status_of(self, number: int) -> dict[str, object]:
+        """Return the dispatch status for one filed request."""
+        details = (
+            self.status(number)
+            if self.status is not None
+            else {
+                "state": "queued",
+                "session_url": None,
+                "pr_url": None,
+            }
+        )
+        return {"number": number, "dispatch": self.status is not None, **details}
 
     async def mark_fixing(self, number: int) -> None:
         """Move a request issue from ready to fixing."""

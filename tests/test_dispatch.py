@@ -1,6 +1,7 @@
 # mypy: disable-error-code="no-untyped-def"
 
 import json
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -86,7 +87,7 @@ async def test_dispatch_dry_run_has_no_mutations_or_sessions(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_skips_requests_and_migrates_legacy_ledger(tmp_path) -> None:
+async def test_dispatches_requests_and_migrates_legacy_ledger(tmp_path) -> None:
     settings = settings_from_env(example_manifest())
     tracker = FakeTracker()
     tracker.issues.append(issue_record(labels=[READY, REQUEST]))
@@ -118,12 +119,94 @@ async def test_dispatch_skips_requests_and_migrates_legacy_ledger(tmp_path) -> N
     ledger = dispatcher._load_ledger()
     assert ledger.records[0].session_id == "legacy-session"
     assert legacy_path.read_bytes() == legacy_before
-    assert await dispatcher.poll_once() == []
-    assert not agent.created
-    tracker.issues[0].labels = [READY]
-    await dispatcher.poll_once()
+    actions = await dispatcher.poll_once()
+    assert len(agent.created) == 1
+    assert actions and "started https://app.devin.ai/sessions/s1" in actions[0]
+    assert DISPATCHED in tracker.issues[0].labels
+    assert FIXING in tracker.issues[0].labels
     assert (tmp_path / "new.json").exists()
     assert legacy_path.read_bytes() == legacy_before
+
+
+@pytest.mark.asyncio
+async def test_poke_wakes_dispatch_loop_before_long_interval(tmp_path, monkeypatch) -> None:
+    settings = settings_from_env(example_manifest())
+    dispatcher = Dispatcher(
+        FakeTracker(),
+        FakeAgent(),
+        tmp_path / "dispatch.json",
+        manifest=settings.manifest,
+        interval_s=3600,
+        dry_run=False,
+    )
+    first_poll = asyncio.Event()
+    second_poll = asyncio.Event()
+    poll_count = 0
+
+    async def poll_once() -> list[str]:
+        nonlocal poll_count
+        poll_count += 1
+        (first_poll if poll_count == 1 else second_poll).set()
+        return []
+
+    monkeypatch.setattr(dispatcher, "poll_once", poll_once)
+    task = asyncio.create_task(dispatcher.run())
+    try:
+        await asyncio.wait_for(first_poll.wait(), timeout=1)
+        dispatcher.poke()
+        await asyncio.wait_for(second_poll.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert poll_count == 2
+
+
+def test_request_status_reports_queued_working_and_finished_with_pr_url(tmp_path) -> None:
+    settings = settings_from_env(example_manifest())
+    path = tmp_path / "dispatch.json"
+    dispatcher = Dispatcher(
+        FakeTracker(),
+        FakeAgent(),
+        path,
+        manifest=settings.manifest,
+        interval_s=60,
+        dry_run=False,
+    )
+    assert dispatcher.request_status(42) == {"state": "queued", "session_url": None, "pr_url": None}
+
+    ledger = DispatchLedger(
+        records=[
+            DispatchRecord(
+                issue=43,
+                session_id="s43",
+                session_url="https://app.devin.ai/sessions/s43",
+                started_at=datetime.now(timezone.utc),
+            ),
+            DispatchRecord(
+                issue=44,
+                session_id="s44",
+                session_url="https://app.devin.ai/sessions/s44",
+                started_at=datetime.now(timezone.utc),
+                done=True,
+                status="finished",
+                pr_url="https://github.com/sesh11/ambient-home/pull/44",
+            ),
+        ]
+    )
+    dispatcher._save_ledger(ledger)
+
+    assert dispatcher.request_status(43) == {
+        "state": "working",
+        "session_url": "https://app.devin.ai/sessions/s43",
+        "pr_url": None,
+    }
+    assert dispatcher.request_status(44) == {
+        "state": "finished",
+        "session_url": "https://app.devin.ai/sessions/s44",
+        "pr_url": "https://github.com/sesh11/ambient-home/pull/44",
+    }
 
 
 @pytest.mark.asyncio

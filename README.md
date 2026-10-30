@@ -47,6 +47,20 @@ it must match that host using `http`; `Sec-Fetch-Site`, if present, must be `sam
 from a non-browser client without cross-origin metadata or from the same origin. `POST /api/requests` requires
 `Content-Type: application/json` (optional parameters such as `charset=utf-8` are accepted).
 
+Filed requests become GitHub issues labeled `factory:request` and `factory:ready-for-fix`, and Garage dispatches them
+like any other ready issue. When dispatch is enabled, a newly filed request wakes Garage immediately rather than
+waiting for the next dispatch interval. `GET /api/requests/{number}` reports dispatch state, for example:
+
+```json
+{
+  "number": 42,
+  "dispatch": true,
+  "state": "working",
+  "session_url": "https://app.devin.ai/sessions/example",
+  "pr_url": null
+}
+```
+
 Run the local checks with:
 
 ```sh

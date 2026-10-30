@@ -14,7 +14,7 @@ import httpx
 from pydantic import Field, BaseModel
 
 from garage_sdk import emit, scrub_text
-from garage.report import READY, FIXING, LABELS, REQUEST, DISPATCHED
+from garage.report import READY, FIXING, LABELS, DISPATCHED
 from garage.tracker import Tracker, IssueRecord
 from garage.agents.base import CodingAgent, SessionStatus
 from garage_sdk.manifest import Manifest
@@ -188,6 +188,11 @@ class Dispatcher:
         self.dry_run = dry_run
         self.clock = clock
         self._labels_ready = False
+        self._wake = asyncio.Event()
+
+    def poke(self) -> None:
+        """Wake the dispatch loop to check for new ready issues."""
+        self._wake.set()
 
     def _load_ledger(self) -> DispatchLedger:
         if self.ledger_path.exists():
@@ -209,7 +214,23 @@ class Dispatcher:
             except Exception as exc:
                 logger.exception("Garage dispatch failed")
                 emit("factory.dispatch_failed", "factory", "error", exc_type=type(exc).__name__, error=str(exc))
-            await asyncio.sleep(self.interval_s)
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=self.interval_s)
+            except TimeoutError:
+                pass
+            self._wake.clear()
+
+    def request_status(self, number: int) -> dict[str, object]:
+        """Return the latest dispatch state for a filed request."""
+        record = self._load_ledger().latest(number)
+        if record is None:
+            return {"state": "queued", "session_url": None, "pr_url": None}
+        state = (record.status or "finished") if record.done else "working"
+        return {
+            "state": state,
+            "session_url": record.session_url,
+            "pr_url": record.pr_url,
+        }
 
     async def poll_once(self) -> list[str]:
         """Follow up on running sessions, then dispatch new ready issues."""
@@ -225,7 +246,7 @@ class Dispatcher:
         return done
 
     async def _consider(self, ledger: DispatchLedger, issue: IssueRecord) -> str | None:
-        if issue.state != "open" or DISPATCHED in issue.labels or REQUEST in issue.labels:
+        if issue.state != "open" or DISPATCHED in issue.labels:
             return None
         record = ledger.latest(issue.number)
         if record is not None and not record.labeled:
