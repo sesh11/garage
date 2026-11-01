@@ -254,6 +254,90 @@ async def test_blocked_session_with_summary_is_finished_and_uses_test_result(tmp
     assert "Test result: passed" in comment
 
 
+def _dispatcher_for_follow_up(tmp_path, session: SessionState) -> tuple[Dispatcher, FakeTracker]:
+    settings = settings_from_env(example_manifest())
+    tracker = FakeTracker()
+    tracker.issues.append(issue_record(labels=[READY, DISPATCHED, FIXING]))
+    agent = FakeAgent()
+    agent.states["s1"] = session
+    path = tmp_path / "dispatch.json"
+    DispatchLedger(
+        records=[
+            DispatchRecord(
+                issue=1,
+                session_id="s1",
+                session_url="https://app.devin.ai/sessions/s1",
+                started_at=datetime.now(timezone.utc),
+                labeled=True,
+            )
+        ]
+    ).save(path)
+    return Dispatcher(tracker, agent, path, manifest=settings.manifest, interval_s=60, dry_run=False), tracker
+
+
+@pytest.mark.asyncio
+async def test_expired_session_with_summary_and_pr_is_finished(tmp_path) -> None:
+    pr_url = "https://github.com/sesh11/ambient-home/pull/38"
+    dispatcher, tracker = _dispatcher_for_follow_up(
+        tmp_path,
+        SessionState(
+            session_id="s1",
+            status="suspended",
+            status_detail="inactivity",
+            structured_output={"summary": "Fixed the failure.", "pr_url": pr_url},
+        ),
+    )
+
+    await dispatcher.poll_once()
+
+    record = dispatcher._load_ledger().records[0]
+    comment = tracker.comments[0][1]
+    assert record.done
+    assert record.status == "finished"
+    assert record.pr_url == pr_url
+    assert "ended (finished)" in comment
+    assert pr_url in comment
+    assert FIXING not in tracker.issues[0].labels
+
+
+@pytest.mark.asyncio
+async def test_expired_session_with_pull_request_is_finished(tmp_path) -> None:
+    pr_url = "https://github.com/sesh11/ambient-home/pull/38"
+    dispatcher, _tracker = _dispatcher_for_follow_up(
+        tmp_path,
+        SessionState.model_validate(
+            {
+                "session_id": "s1",
+                "status": "suspended",
+                "status_detail": "inactivity",
+                "pull_requests": [{"pr_url": pr_url}],
+            }
+        ),
+    )
+
+    await dispatcher.poll_once()
+
+    record = dispatcher._load_ledger().records[0]
+    assert record.done
+    assert record.status == "finished"
+    assert record.pr_url == pr_url
+
+
+@pytest.mark.asyncio
+async def test_expired_session_without_summary_or_pr_remains_expired(tmp_path) -> None:
+    dispatcher, _tracker = _dispatcher_for_follow_up(
+        tmp_path,
+        SessionState(session_id="s1", status="suspended", status_detail="inactivity"),
+    )
+
+    await dispatcher.poll_once()
+
+    record = dispatcher._load_ledger().records[0]
+    assert record.done
+    assert record.status == "expired"
+    assert record.pr_url is None
+
+
 @pytest.mark.asyncio
 async def test_follow_up_reads_legacy_robot_test_output(tmp_path) -> None:
     settings = settings_from_env(example_manifest())

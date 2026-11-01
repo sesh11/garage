@@ -1,5 +1,6 @@
 # mypy: disable-error-code="no-untyped-def"
 
+import logging
 from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime, timezone
@@ -136,6 +137,37 @@ def test_load_dotenv_runs_before_environment_resolution(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_report", lambda *args: None)
     assert cli.main(["report", "--dry-run"]) == 1
     assert calls == ["dotenv", "settings"]
+
+
+def _assert_main_configures_logging(monkeypatch, value: str | None, expected_level: int) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: calls.append(kwargs))
+
+    def stop_settings(manifest):
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(cli, "settings_from_env", stop_settings)
+    if value is None:
+        monkeypatch.delenv("GARAGE_LOG_LEVEL", raising=False)
+    else:
+        monkeypatch.setenv("GARAGE_LOG_LEVEL", value)
+
+    assert cli.main(["dispatch", "--dry-run"]) == 1
+    assert len(calls) == 1
+    assert calls[0]["level"] == expected_level
+
+
+def test_main_configures_info_logging_by_default(monkeypatch) -> None:
+    _assert_main_configures_logging(monkeypatch, None, logging.INFO)
+
+
+def test_main_configures_logging_from_environment(monkeypatch) -> None:
+    _assert_main_configures_logging(monkeypatch, "debug", logging.DEBUG)
+
+
+def test_main_falls_back_to_info_for_unknown_log_level(monkeypatch) -> None:
+    _assert_main_configures_logging(monkeypatch, "nonsense", logging.INFO)
 
 
 def test_serve_connects_request_bridge_to_dispatcher(monkeypatch) -> None:

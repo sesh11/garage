@@ -1,5 +1,6 @@
 """Garage command-line entry point."""
 
+import os
 import sys
 import asyncio
 import logging
@@ -276,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--port", type=int)
 
     args = parser.parse_args(argv)
+    log_level = logging.getLevelNamesMapping().get(os.getenv("GARAGE_LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
         settings = settings_from_env(args.manifest)
         if args.command == "report":
