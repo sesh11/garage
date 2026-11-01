@@ -308,11 +308,12 @@ class Dispatcher:
                 continue
             status = self.agent.map_status(session.status.lower(), (session.status_detail or "").lower())
             output = session.structured_output or {}
-            if status is SessionStatus.blocked and _has_summary(output):
+            output_pr_url = output.get("pr_url")
+            has_pr = (isinstance(output_pr_url, str) and bool(output_pr_url)) or bool(session.pull_requests)
+            if status in {SessionStatus.blocked, SessionStatus.expired} and (_has_summary(output) or has_pr):
                 status = SessionStatus.finished
             if status is None or status not in _DONE:
                 continue
-            output_pr_url = output.get("pr_url")
             pr_url: str | None = output_pr_url if isinstance(output_pr_url, str) and output_pr_url else None
             if pr_url is None and session.pull_requests:
                 pr_url = session.pull_requests[-1].pr_url
