@@ -12,6 +12,7 @@ Status: **design draft for review. No code yet.** Builds on [vision.md](vision.m
    it choose; Garage itself does not call an LLM to route (§4).
 4. **Approvals are configurable.** Whoever connects to Garage sets up how approvals work, with a few
    modes. A device relaying approval (Alfred saying "approve") is one of those modes (§5a).
+5. **A local coding agent can set Garage up** by following a skill shipped in the repo (§3b).
 
 ## 1. The idea in one paragraph
 
@@ -175,6 +176,53 @@ working garage on their own repos. That means:
   surface other people build clients against.
 - **Hosted CI on the public repo** (GitHub Actions running the existing gate), so outside contributors'
   PRs get checked. Today there is none.
+
+## 3b. Setup skill: let a local coding agent install Garage
+
+A **skill** is a folder with a `SKILL.md` file: a short description (so the agent knows when to use it)
+plus step-by-step instructions and helper scripts. Claude Code, Codex and Devin all read the same
+open format ("Agent Skills"), so one file can serve all of them. The person says "set up Garage for
+me" to the agent on their Mac and the agent does the work, stopping only for the steps that need the
+person.
+
+Two skills, shipped in the Garage repo and also printed by `garage skills install`:
+
+| Skill | When the agent uses it | What it does |
+|---|---|---|
+| `setup-garage` | "install / set up Garage" | install, `garage init`, connect GitHub, pick repos, start the service, check it works |
+| `use-garage` | "send this to Garage", "what's Garage working on" | register this agent as a Garage client and add Garage's MCP server to the agent's config |
+
+Where the files live:
+- `.agents/skills/setup-garage/SKILL.md` (read by Codex and Devin), with a copy at
+  `.claude/skills/setup-garage/SKILL.md` for Claude Code. A test keeps the copies identical.
+- `garage skills install --agent claude|codex|devin` copies them into the user-level skill folder, so
+  the skill works before the repo is cloned.
+
+What `setup-garage` tells the agent to do (sketch):
+
+```markdown
+---
+name: setup-garage
+description: Install and configure Garage (personal coding-work loop) on this machine. Use when the
+  user asks to set up, install, connect or repair Garage.
+---
+1. Check prerequisites: `uv --version`, `git`, `gh auth status` (optional).
+2. Install: `uv tool install <garage package>`; confirm `garage --version`.
+3. Run `garage init --non-interactive --json` and read the steps it returns.
+4. For each step marked `needs_person` (create the GitHub App, install it on repos, paste an agent
+   key), show the person the URL or prompt and wait. Never type secrets yourself or put them in files.
+5. Ask the person which approval mode they want per step (default: manual for all).
+6. Start the service (`garage serve`, or `garage service install` for a background LaunchAgent).
+7. Verify with `garage doctor --json`; fix what it reports; finish with the dashboard URL.
+```
+
+For this to work, the CLI has to be easy for agents to drive (part of phase 3 and the open source release):
+- `garage init --non-interactive --json` returns a list of setup steps with a state (`done`, `todo`,
+  `needs_person`) and the URL or command for each, and can be run again safely (it resumes).
+- `garage doctor --json` checks everything (config, GitHub App, catalog, service up, agent keys
+  present but never printed) and says how to fix each failure.
+- Secrets are always entered by the person (browser or a hidden prompt), never passed in as
+  command-line arguments by the agent.
 
 ## 4. Routing incoming work to the right repo
 
@@ -426,7 +474,8 @@ and markers don't change.
 5. **Live updates + MCP**: SSE `/v1/events`, `garage mcp` (stdio) with submit/list/get/answer/decide
    tools and the routing instructions for upfront models.
 6. **Multi-repo work orders**: parent/child work orders, linked PRs, joint proof.
-7. **Open source release**: LICENSE, hosted CI, `garage init` end to end, PyPI releases, quickstart.
+7. **Open source release**: LICENSE, hosted CI, `garage init` end to end, `garage doctor`, the
+   `setup-garage` / `use-garage` skills, PyPI releases, quickstart.
    (LICENSE and CI can land any time; the rest once phases 1–5 work.)
 8. Later: webhook relay, hosted Garage, other trackers.
 
@@ -447,6 +496,9 @@ Checked against public docs on 2026-11-01:
   `--output-format stream-json`; `--permission-mode` and `--allowedTools` control what it may do.
 - **Verified (Codex docs)**: `codex exec "<task>"` runs non-interactively, prints the final message to
   stdout, and `--json` streams JSON Lines events.
+- **Verified (skills docs)**: Agent Skills is an open `SKILL.md` format (frontmatter `name` and
+  `description`, then instructions; optional `scripts/`). Codex reads repo skills from `.agents/skills`;
+  Devin reads `.agents/skills`; Claude Code reads `.claude/skills/<name>/SKILL.md`.
 - **Verified (MCP spec 2025-06-18)**: two standard transports, stdio and Streamable HTTP.
 - **From Garage's own code, not re-checked against Devin docs**: Devin v3 sessions at
   `/v3/organizations/{org}/sessions` with repos, tags, structured output and an ACU limit.
