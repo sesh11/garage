@@ -2,6 +2,17 @@
 
 Status: **design draft for review. No code yet.** Builds on [vision.md](vision.md) (contracts 1–5).
 
+## Decisions so far (from Nithin)
+
+1. **Mac first, hosted later.** Garage runs on the user's own machine; a hosted version comes later.
+2. **Open source from day one.** Another developer must be able to download Garage and use it on their
+   own repos with no help from us (§3a).
+3. **The "upfront model" picks the repo.** Whatever assistant or agent the person is talking to (Alfred,
+   Claude Code, Codex, Devin...) already has an AI model. Garage gives it the repo catalog and lets
+   it choose; Garage itself does not call an LLM to route (§4).
+4. **Approvals are configurable.** Whoever connects to Garage sets up how approvals work, with a few
+   modes. A device relaying approval (Alfred saying "approve") is one of those modes (§5a).
+
 ## 1. The idea in one paragraph
 
 Each person (or team) gets their **own garage**. They connect their code host once (GitHub first).
@@ -26,6 +37,10 @@ the same thing.
 - **MCP** (Model Context Protocol): a standard way for AI agents (Claude Code, Codex, Devin...) to
   call tools. Garage would expose its verbs as MCP tools.
 - **SSE** (server-sent events): a simple way for a web page or client to receive live updates over HTTP.
+- **Upfront model**: the AI model inside whatever the person is talking to (Alfred's voice model, a
+  Claude Code session, ...). It understands the ask; Garage keeps the records and the rules.
+- **Approver**: a person, or a device/assistant acting for a person, allowed to say yes or no at an
+  approval step.
 
 ## 2. The whole flow
 
@@ -51,12 +66,12 @@ flowchart TB
     ISS --> API
     API --> INBOX["Inbox item<br/>(ask or incident)"]
 
-    INBOX --> ROUTE["3. Route<br/>explicit repo > source's app > ranked guess"]
+    INBOX --> ROUTE["3. Route<br/>repo chosen by caller's upfront model<br/>> source's app > ask the human"]
     CAT -. "repo profiles" .-> ROUTE
     ROUTE -- "sure" --> TRI["Triage + plan<br/>(contract 3)"]
     ROUTE -- "unsure or several repos" --> ASK{{"Human picks or<br/>confirms the repo(s)"}}
     ASK --> TRI
-    TRI --> APP{{"Human approves<br/>triage + plan"}}
+    TRI --> APP{{"Approval (mode set per step)<br/>dashboard, GitHub, or a device<br/>relaying for the human"}}
     APP --> WO["Work order per repo<br/>(contract 4)"]
     WO --> AG["Coding agent<br/>Devin, Claude Code, Codex..."]
     AG --> PROOF["Proof (contract 5)"]
@@ -91,7 +106,8 @@ the same moment they approve the triage decision. No extra approval stop unless 
    - *Own app* (local-first, now): Garage registers a private App for this user in one click using
      GitHub's **App manifest flow** (Garage sends a prefilled form; GitHub hands back the App id,
      private key and webhook secret). Nothing is shared between users, no server of ours is needed.
-   Recommend: own app via the manifest flow first; it's the only one that needs no hosted service.
+   **Decided: own app via the manifest flow.** It needs no hosted service and no shared secret, which
+   is also what lets anyone run Garage from the open source repo (§3a).
 3. The user is sent to the App's install page and chooses **"All repositories"** or **"Only select
    repositories"**. GitHub then redirects back to Garage's *setup URL* with the `installation_id`.
 4. Garage stores a **Connection** (`kind=github`, installation id, account login) in its local state;
@@ -136,11 +152,46 @@ GitHub can only push a webhook to a URL it can reach. Options:
 | C. Relay (smee.io-style or our own) | a public relay receives webhooks; Garage holds an outbound connection to it | near-instant | another service to trust; payloads pass through it |
 | D. Tunnel (Cloudflare Tunnel, ngrok, Tailscale Funnel) | exposes the Mac's port publicly | instant | user must install and keep a tunnel; exposes the Mac |
 
-**Recommend A now**, with the webhook handler written so B or C can feed it later without changes
+**Recommend A now** (fits "Mac first"), with the webhook handler written so B or C can feed it later without changes
 (everything goes through one `handle_github_event(name, payload)` function). Repo lists change rarely,
 so minutes of delay don't matter. When there's a hosted Garage, it receives webhooks directly.
 
+## 3a. Open source from day one: what that changes
+
+Another developer should be able to go from `git clone` (or `uvx garage` / `pipx install garage`) to a
+working garage on their own repos. That means:
+
+- **No shared secrets or servers of ours.** Each user creates their own GitHub App through the manifest
+  flow (§3); their keys stay on their machine. Agent keys (Devin, OpenAI, Anthropic...) are theirs too.
+- **`garage init`** does the whole setup interactively: create the GitHub App, install it on chosen repos,
+  sync the catalog, register a first client (the dashboard), pick approval modes (§5a), and optionally
+  connect an agent. It writes a workspace config file (no secrets) plus keychain/`0600` secrets.
+- **Nothing specific to us in the code.** The existing boundary test already bans app words; ambient-home
+  becomes one example under `examples/`, not a requirement.
+- **Works with zero agents connected**: you can still connect GitHub, see the catalog, and file asks;
+  dispatch is off until an agent is connected (today's "default off" safety rule).
+- **Publishing basics**: a LICENSE (decision below), versioned releases of `garage` and `garage-sdk`
+  on PyPI, a quickstart in the README, and the `/v1` API + JSON Schemas documented as the stable
+  surface other people build clients against.
+- **Hosted CI on the public repo** (GitHub Actions running the existing gate), so outside contributors'
+  PRs get checked. Today there is none.
+
 ## 4. Routing incoming work to the right repo
+
+**Decided: the upfront model routes.** Garage doesn't run its own LLM to guess repos. Instead it gives
+callers what they need to choose well, checks the choice, and falls back to the human. This keeps
+Garage free of model keys and model costs, and the caller usually knows more about the ask anyway
+(Alfred heard the whole conversation; a Claude Code session is already inside a repo).
+
+What Garage provides for this:
+- `GET /v1/repos` / MCP `garage_repos`: the catalog with each repo's profile (description, topics,
+  languages, README excerpt, `garage.toml` app id and related repos). The README excerpt is used as the
+  summary, with no LLM.
+- An MCP **prompt/instructions** text shipped with the MCP server telling the upfront model: "pick repo(s)
+  from `garage_repos`; give a confidence and one-line reason; if unsure, leave `repo` empty."
+- Optional cheap keyword ranking (no LLM) for callers with no model of their own (a plain CLI, a webhook).
+
+Garage then applies these rules, in order:
 
 Run these in order; stop at the first that gives a confident answer.
 
@@ -150,16 +201,18 @@ Run these in order; stop at the first that gives a confident answer.
    resource stamp) → the catalog repo whose `garage.toml` has that `[app] id`. A GitHub issue already
    belongs to a repo. A client can also have a **default repo** set when it was registered (Alfred →
    ambient-home).
-3. **Ranked guess**: score every catalog repo against the ask text: keyword overlap with the profile
-   first (cheap, no network), then an LLM call given the ask plus the top ~10 repo summaries, which
-   returns repo(s) with a confidence and a one-line reason. Later: GitHub code search for a named
-   function or file.
-4. **Ask the human**: if the best confidence is below a threshold (start at 0.8), or two repos are close,
+3. **The caller's pick** (from its upfront model), with its confidence and reason. Garage checks the repo
+   exists in the catalog and isn't archived. A public/untrusted source's pick is never taken as final.
+4. **Ask the human**: if no repo was given, the caller's confidence is below a threshold (start at 0.8),
+   or the trust level of the caller is low,
    the inbox item goes to `needs_repo` with the top 3 choices. The human taps one (works from a phone,
    or Alfred asks "Is that for ambient-home or ambient-devices?").
 
-Every human answer is stored with the ask text, so later guesses get better and the same kind of ask
-stops needing a question.
+Every human answer is stored with the ask text and returned in `garage_repos` as "past examples", so the
+upfront model's next pick gets better without Garage running a model.
+
+Explicit-repo (1) and the caller's pick (3) are listed separately because they carry different weight:
+an explicit repo from an `owner` is final; a model's guess still goes through the confidence check.
 
 ### Asks that span several repos
 
@@ -184,7 +237,7 @@ connector (ambient-devices). Proposal:
     {"repo": "sesh11/ambient-devices", "role": "also", "confidence": 0.41,
      "reason": "mic gain is set by the device connector"}
   ],
-  "method": "llm",
+  "method": "caller_model",
   "needs_confirmation": true
 }
 ```
@@ -218,7 +271,8 @@ approved → running → testing → done | declined`. These map onto the existi
 | submit work | `POST /v1/items` | `garage_submit` | apps, humans, agents |
 | list / get items | `GET /v1/items`, `GET /v1/items/{id}` | `garage_list`, `garage_get` | all |
 | answer a question (pick repo, needs-info) | `POST /v1/items/{id}/answers` | `garage_answer` | humans; agents only if allowed |
-| approve / decline | `POST /v1/approvals` | `garage_approve` | **humans only** |
+| list waiting approvals | `GET /v1/approvals` | `garage_pending_approvals` | all (filtered) |
+| approve / decline / edit | `POST /v1/approvals/{id}/decision` | `garage_decide` | whoever the step's mode allows (§5a) |
 | cancel | `POST /v1/items/{id}/cancel` | `garage_cancel` | the submitter or a human |
 | list repos | `GET /v1/repos` | `garage_repos` | all |
 | connections | `GET /v1/connections`, `POST /v1/connections/github/start` | — | humans (owner) |
@@ -250,17 +304,69 @@ Garage records which client did every action (the audit log).
 | Kind | Examples | May | May not |
 |---|---|---|---|
 | `owner` | Nithin on the dashboard or phone | everything | — |
-| `app` | Alfred, a running install | submit, read own items, answer if relayed from the human | approve |
-| `agent` | Claude Code, Codex, Devin via MCP | submit, read, attach findings | approve, change connections |
+| `app` | Alfred, a running install | submit, read own items, answer | approve, unless a mode in §5a allows it |
+| `agent` | Claude Code, Codex, Devin via MCP | submit, read, attach findings | approve (unless allowed in §5a), change connections |
 | `public` | text from a GitHub issue by a stranger | becomes an inbox item | skip triage; its text is treated as untrusted data, never as instructions |
 
-- Approvals always need an `owner` (a human). An approval relayed by Alfred counts only if the owner
-  set Alfred as allowed to relay approvals and spoke it; Garage records it as `via: alfred`.
+- Who may approve is not fixed by kind; it is set by the approval modes in §5a. By default only `owner`
+  can approve.
 - **Trust level** of an ask (`owner` > `app` > `agent` > `public`) decides how much Garage does on its
   own: e.g. owner asks may skip the triage digest; public asks always wait for triage. Untrusted text is
   quoted inside work orders, clearly marked, so it cannot instruct the agent (prompt injection).
 - Locally, the API listens on loopback only (as the bridge does now); tokens are still required, so a
   random web page or another local program can't act as you.
+
+## 5a. Approvals: one mechanism, several modes
+
+An **approval request** is created whenever an item reaches an approval step: `repo` (confirm routing),
+`triage`, `plan`, `release`. Garage then sends that request to the step's approvers and waits for an
+**approval decision**. Every decision records who decided, through which client (`via`), and when.
+
+Whoever sets up Garage (`garage init`, or the dashboard settings) picks a **mode per step**:
+
+| Mode | What happens | Example |
+|---|---|---|
+| `manual` | only the owner, on the dashboard, the CLI or a GitHub comment (`/approve`, `/decline <reason>`) | the default for every step |
+| `relay` | named clients may pass on the owner's decision; they must say it came from the person (`on_behalf_of`), and Garage records `via` | Alfred hears "approve the wake-word plan" and sends it |
+| `delegate` | named clients may decide on their own, within limits (kinds, max cost, repos) | a trusted review agent approves triage of low-risk incidents |
+| `auto` | Garage approves by itself when the policy rule matches | auto-accept triage for `critical` incidents |
+
+Notes:
+- **Asking is separate from deciding.** Every connected client can *be told* an approval is waiting
+  (SSE, push, Alfred saying "the plan for the wake word is ready, shall I approve it?"). Only clients
+  allowed by the mode can send back the decision.
+- **Devices relaying approvals** are just `relay` mode on a device client. The device declares how it
+  confirmed the person (e.g. `voice`, `button`), so the owner can allow voice for `triage` but not for
+  `release`.
+- **Safe defaults:** `manual` for every step after `garage init`. vision.md currently says plan approval is
+  "never skipped" and auto-release is rejected; with this design those become defaults the owner can
+  change, except that `auto` for `release` stays off until we have real proof checks (contract 5).
+- Fits the manifest: `policy.needs_approval` and `policy.auto_accept` already exist in `garage.toml`. A
+  repo's manifest can make a step *stricter* than the workspace setting, never looser.
+
+Config sketch (workspace config, no secrets):
+
+```toml
+[approvals.repo]
+mode = "relay"
+clients = ["alfred", "dashboard"]
+
+[approvals.triage]
+mode = "auto"
+when = "kind == 'incident' and severity == 'critical'"
+
+[approvals.plan]
+mode = "relay"
+clients = ["alfred"]
+confirmed_by = ["voice"]
+
+[approvals.release]
+mode = "manual"
+```
+
+API: `GET /v1/approvals?state=waiting`, `POST /v1/approvals/{id}/decision`
+`{"decision": "approve" | "decline" | "edit", "reason": "...", "on_behalf_of": "owner", "confirmed_by": "voice"}`;
+MCP `garage_pending_approvals`, `garage_decide`.
 
 ### What goes in `garage-sdk` vs the Garage service
 
@@ -268,7 +374,8 @@ Keep the SDK small and pydantic-only (as vision.md says).
 
 **`garage-sdk` adds (new modules, nothing existing changes):**
 - `garage_sdk.api`: pydantic models for the nouns and request/response bodies above
-  (`SubmitWork`, `InboxItem`, `ItemState`, `RoutingDecision`, `Approval`, `WorkOrder`, `Run`, `RepoRef`,
+  (`SubmitWork`, `InboxItem`, `ItemState`, `RoutingDecision`, `ApprovalRequest`, `ApprovalDecision`,
+  `ApprovalMode`, `WorkOrder`, `Run`, `RepoRef`,
   `GarageEvent`), plus their JSON Schemas exported as files so non-Python clients (the JS dashboard,
   a phone app) use the same shapes.
 - Optional later: a thin typed client `garage_sdk.client` behind an extra (`garage-sdk[client]`, adds
@@ -314,13 +421,14 @@ and markers don't change.
    `/api/requests` routed through it. Explicit repo only. ambient-home untouched.
 3. **GitHub App connection + catalog**: manifest-flow App registration, install, repo sync by polling,
    repo profiles (no LLM summary yet), `GET /v1/repos`, dashboard "Connected repos" page.
-4. **Routing**: app-id and default-repo routing, keyword ranking, `needs_repo` state with a pick-one
-   answer; then the LLM summary + ranking.
-5. **Live updates + MCP**: SSE `/v1/events`, `garage mcp` (stdio) with submit/list/get/answer tools.
+4. **Routing + approvals**: app-id, default-repo and caller-pick routing, `needs_repo` with a pick-one
+   answer; approval requests with `manual` and `relay` modes (then `delegate`, `auto`).
+5. **Live updates + MCP**: SSE `/v1/events`, `garage mcp` (stdio) with submit/list/get/answer/decide
+   tools and the routing instructions for upfront models.
 6. **Multi-repo work orders**: parent/child work orders, linked PRs, joint proof.
-7. Later: relay/webhook delivery, hosted Garage, other trackers.
-
-Phases 1–2 can land without any decision below except the API naming; phase 3 needs decision 1.
+7. **Open source release**: LICENSE, hosted CI, `garage init` end to end, PyPI releases, quickstart.
+   (LICENSE and CI can land any time; the rest once phases 1–5 work.)
+8. Later: webhook relay, hosted Garage, other trackers.
 
 ## 8. Verified vs assumed (vendor facts)
 
@@ -349,13 +457,11 @@ Checked against public docs on 2026-11-01:
 
 ## 9. Open questions
 
-1. **Local-first or hosted?** Recommended: local-first (your Mac), own GitHub App via the manifest flow,
-   polling; hosted later. Hosted changes the App (one shared app), webhooks and auth.
-2. **Who are the first users?** Just you across your repos, or other developers soon? This decides how
-   much sign-in and multi-user work goes into phase 2–3.
-3. **Routing threshold and LLM**: is it OK for Garage to send repo summaries and ask text to an LLM
-   (which provider) to route? Or keyword ranking + asking you only, at first?
-4. **Approvals by voice**: may Alfred relay your approvals ("Alfred, approve the wake-word plan"), or
-   must approvals happen on the dashboard / GitHub?
-5. Should repos without a `garage.toml` get work at all, or only after you add one?
-6. Multi-repo asks: one combined plan approval, or one approval per repo?
+1. **License**: MIT (shortest, most permissive) or Apache-2.0 (permissive plus an explicit patent grant)?
+   Recommend Apache-2.0 for a project others will build on.
+2. **Is relayed voice approval OK for `plan` by default**, or should `garage init` default every step to
+   `manual` and let the owner turn `relay` on? (The doc assumes all `manual`.)
+3. Repos without a `garage.toml`: may they get work at all, or only after one is added?
+4. Multi-repo asks: one combined plan approval, or one approval per repo?
+5. Package name on PyPI: `garage` is likely taken; check and pick (e.g. `garage-loop`), keeping the
+   `garage` command name.
