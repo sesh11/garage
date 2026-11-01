@@ -38,7 +38,8 @@ ready issues to list.
 the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_REPORT` and `GARAGE_DISPATCH`;
 `GARAGE_GITHUB_TOKEN` enables issue mutations, while `DEVIN_API_KEY` and `DEVIN_ORG_ID` enable dispatch. Additional
 settings include `GARAGE_MAX_NEW_ISSUES_PER_DAY`, `GARAGE_DISPATCH_INTERVAL`, `GARAGE_LOOKBACK`,
-`GARAGE_POLL_INTERVAL`, `GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, and `GARAGE_BRIDGE_TOKEN`.
+`GARAGE_POLL_INTERVAL`, `GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_BRIDGE_TOKEN`, and
+`GARAGE_LOG_LEVEL` (default `INFO`).
 Manifest `[dispatch].base_branch` selects the branch fixes start from and pull requests target; it defaults to `main`.
 
 ## Request bridge
