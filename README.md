@@ -181,3 +181,7 @@ The service, loopback request bridge, and manifest-driven dispatch are implement
 deployment, and other future integrations are tracked in [implemented versus future work](docs/implemented-vs-future.md).
 See the [migration notes](docs/migration.md)
 and [history evidence](docs/history-evidence.md).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
