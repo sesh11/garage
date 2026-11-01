@@ -94,8 +94,17 @@ flowchart TB
     class AG,TEST plugin
 ```
 
-Garage aims to be a vendor-neutral loop that uses observability tools, coding agents and release systems
-as plug-ins rather than replacing them. This draft does not assess other vendors' current capabilities.
+Some vendors cover parts of this (checked 2026-10, from their public docs):
+- Sentry Seer Autofix can go from a Sentry issue to a drafted PR.
+- Datadog Bits Code turns Datadog signals into fix PRs.
+- GitHub lets you assign an issue to the Copilot cloud agent, which opens a PR.
+
+Each is tied to its own vendor's signals or agent, and each stops at the PR. None of them
+(as far as their docs say) picks between agents, requires a specific test kit such as a
+hardware test, or checks after release that the problem actually stopped. None of them does
+product triage either: deciding across many asks what to build, what to merge together, and what
+to turn down. Garage aims to be the vendor-neutral loop that uses these tools as plug-ins rather
+than replacing them.
 
 ### Words used here
 
