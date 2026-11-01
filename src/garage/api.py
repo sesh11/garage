@@ -129,6 +129,7 @@ def router(
         if item is None or not visible(item, client):
             return JSONResponse({"error": "not found"}, status_code=404)
         if item.issue and bridge and bridge.status:
+            previous_run, previous_state = item.run, item.state
             item.run = RunLink.model_validate(bridge.status_of(item.issue.number))
             if item.state not in {ItemState.done, ItemState.declined, ItemState.cancelled} and item.run.state in {
                 "working",
@@ -136,7 +137,8 @@ def router(
             }:
                 item.state = ItemState.running
             # A finished agent session is not proof that its change shipped.
-            store.save(item, str(client["name"]), "status")
+            if item.run != previous_run or item.state != previous_state:
+                store.save(item, str(client["name"]), "status")
         return JSONResponse(item.model_dump(mode="json"))
 
     @routes.post("/items/{item_id}/cancel", response_model=None)

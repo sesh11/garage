@@ -130,11 +130,18 @@ async def test_filing_retry_and_status(tmp_path: Path) -> None:
         assert retry.json()["state"] == "approved"
         assert tracker.issues[0].labels == [REQUEST, READY]
         item_id = retry.json()["id"]
-        assert (await client.get(f"/v1/items/{item_id}")).json()["state"] == "running"
+        running = (await client.get(f"/v1/items/{item_id}")).json()
+        assert running["state"] == "running"
+        assert (await client.get(f"/v1/items/{item_id}")).json() == running
+        with store.connection() as db:
+            assert db.execute("SELECT COUNT(*) FROM audit WHERE action='status'").fetchone()[0] == 1
         status["state"] = "finished"
         finished = (await client.get(f"/v1/items/{item_id}")).json()
         assert finished["state"] == "running"
         assert finished["run"]["state"] == "finished"
+        assert (await client.get(f"/v1/items/{item_id}")).json() == finished
+        with store.connection() as db:
+            assert db.execute("SELECT COUNT(*) FROM audit WHERE action='status'").fetchone()[0] == 2
         await client.post("/v1/items", json={"id": "x", "text": "hello"})
         assert len(tracker.creates) == 1
         with store.connection() as db:
