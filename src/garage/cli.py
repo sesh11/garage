@@ -2,22 +2,25 @@
 
 import os
 import sys
+import json
 import asyncio
 import logging
 import argparse
 import ipaddress
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import uvicorn
 from dotenv import load_dotenv
 
 from garage.ui import create_app
 from garage_sdk import configure
+from garage.store import Store
 from garage.github import GitHubIssues
 from garage.report import READY, DEFAULT_ATTRIBUTION, DEFAULT_REQUEST_ATTRIBUTION, RequestLogger, IncidentReporter
 from garage.tracker import Tracker, IssueRecord
+from garage_sdk.api import ItemKind, IssueLink, ItemState, ClientKind, SubmitWork, json_schemas
 from garage.dispatch import Dispatcher, build_fix_prompt
 from garage.requests import RequestBridge
 from garage.settings import GarageSettings, settings_from_env
@@ -152,6 +155,19 @@ def _event_log(settings: GarageSettings) -> EventLog:
     return EventLog(settings.events_dir, retention_days=settings.retention_days)
 
 
+def _incident_sink(settings: GarageSettings) -> Callable[[Incident, IssueRecord, bool], None]:
+    store = Store(settings.data_dir / "garage.db")
+
+    def record(incident: Incident, issue: IssueRecord, ready: bool) -> None:
+        work = SubmitWork(id=incident.fingerprint, kind=ItemKind.incident, text=incident.title, repo=settings.repo)
+        item, _ = store.submit("garage-monitor", ClientKind.agent, work, work.repo)
+        item.issue = IssueLink(number=issue.number, url=issue.url)
+        item.state = ItemState.approved if ready else ItemState.new
+        store.save(item, "garage-monitor", "file_success")
+
+    return record
+
+
 async def _report(settings: GarageSettings, since: str, dry_run: bool, offline: bool = False) -> list[str]:
     now = datetime.now(timezone.utc)
     event_log = _event_log(settings)
@@ -164,6 +180,7 @@ async def _report(settings: GarageSettings, since: str, dry_run: bool, offline: 
         max_new_per_day=settings.max_new_issues_per_day,
         dry_run=dry_run,
         attribution=settings.manifest.report.attribution or DEFAULT_ATTRIBUTION,
+        on_filed=_incident_sink(settings) if not dry_run else None,
     )
     print(f"{len(incidents)} incident(s) in the last {since} from {event_log.directory}")
     return await reporter.sync(incidents)
@@ -197,6 +214,7 @@ def _loopback_host(host: str) -> bool:
 
 
 def _serve(settings: GarageSettings, host: str, port: int) -> int:
+    store = Store(settings.data_dir / "garage.db")
     source = _event_log(settings)
     sink = EventLog(settings.data_dir / "events")
     configure(sink)
@@ -209,6 +227,7 @@ def _serve(settings: GarageSettings, host: str, port: int) -> int:
     )
     reporter, request_logger = build_reporters(settings)
     if reporter is not None:
+        reporter.on_filed = _incident_sink(settings)
         monitor.add_listener(reporter.notify)
     dispatcher = build_dispatcher(settings)
     bridge = RequestBridge(
@@ -217,7 +236,7 @@ def _serve(settings: GarageSettings, host: str, port: int) -> int:
         on_filed=dispatcher.poke if dispatcher is not None else None,
         status=dispatcher.request_status if dispatcher is not None else None,
     )
-    app = create_app(event_log=source, detector=detector, reporter=reporter, bridge=bridge)
+    app = create_app(event_log=source, detector=detector, reporter=reporter, bridge=bridge, store=store)
     app.state.monitor = monitor
 
     tasks: list[asyncio.Task[None]] = []
@@ -258,6 +277,22 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(prog="garage", description="Local incident monitoring and dispatch.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    schemas_parser = subparsers.add_parser("schemas", help="write v1 JSON schemas")
+    schemas_parser.add_argument("--out", type=Path, default=Path("schemas/v1"))
+    client_parser = subparsers.add_parser("client", help="manage inbox client tokens")
+    client_parser.add_argument("--manifest", type=Path)
+    clients = client_parser.add_subparsers(dest="client_command", required=True)
+    add = clients.add_parser("add")
+    add.add_argument("name")
+    add.add_argument("--kind", choices=["owner", "app", "agent"], required=True)
+    add.add_argument("--default-repo")
+    clients.add_parser("list")
+    remove = clients.add_parser("remove")
+    remove.add_argument("name")
+    items_parser = subparsers.add_parser("items", help="read the local inbox")
+    items_parser.add_argument("--manifest", type=Path)
+    items_parser.add_argument("--state", type=ItemState)
+    items_parser.add_argument("--json", action="store_true")
 
     report_parser = subparsers.add_parser("report", help="report incidents once")
     report_parser.add_argument("--manifest", type=Path)
@@ -280,7 +315,29 @@ def main(argv: list[str] | None = None) -> int:
     log_level = logging.getLevelNamesMapping().get(os.getenv("GARAGE_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
+        if args.command == "schemas":
+            args.out.mkdir(parents=True, exist_ok=True)
+            for name, schema in json_schemas().items():
+                (args.out / f"{name}.json").write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
+            return 0
         settings = settings_from_env(args.manifest)
+        if args.command == "client":
+            store = Store(settings.data_dir / "garage.db")
+            if args.client_command == "add":
+                print(store.add_client(args.name, ClientKind(args.kind), args.default_repo))
+            elif args.client_command == "remove":
+                store.remove_client(args.name)
+            else:
+                print(json.dumps(store.clients(), indent=2))
+            return 0
+        if args.command == "items":
+            items = Store(settings.data_dir / "garage.db").items(args.state)
+            if args.json:
+                print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
+            else:
+                for item in items:
+                    print(f"{item.id} {item.state} {item.submitted_by}: {item.text}")
+            return 0
         if args.command == "report":
             dry_run = args.dry_run or args.offline
             if not dry_run and not settings.github_token:
