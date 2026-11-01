@@ -463,5 +463,5 @@ Checked against public docs on 2026-11-01:
    `manual` and let the owner turn `relay` on? (The doc assumes all `manual`.)
 3. Repos without a `garage.toml`: may they get work at all, or only after one is added?
 4. Multi-repo asks: one combined plan approval, or one approval per repo?
-5. Package name on PyPI: `garage` is likely taken; check and pick (e.g. `garage-loop`), keeping the
+5. Package name on PyPI: `garage` is already taken (checked 2026-11-01); pick another (e.g. `garage-loop`), keeping the
    `garage` command name.
