@@ -182,6 +182,41 @@ deployment, and other future integrations are tracked in [implemented versus fut
 See the [migration notes](docs/migration.md)
 and [history evidence](docs/history-evidence.md).
 
+## Inbox and client tokens
+
+The local inbox is stored in `GARAGE_DATA_DIR/garage.db` (default `~/.garage`).
+Use the same manifest and data directory for the server and CLI. Reporting and
+dispatch are still off by default.
+
+```sh
+garage client add me --kind owner --default-repo owner/repo
+# Save the printed token now: it is shown once, and only its hash is stored.
+garage client list
+garage serve
+```
+
+With that token in `GARAGE_CLIENT_TOKEN`:
+
+```sh
+curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"id":"example-1","text":"Improve the settings page","repo":"owner/repo"}' \
+  http://localhost:8765/v1/items
+curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" http://localhost:8765/v1/items
+garage items --json
+garage client remove me
+```
+
+Repeating a submission ID for the same client returns the original item. Owners
+can read all items; other clients can only read and cancel their own. Without a
+repository, an item waits in `needs_repo`. Matching requests filed through the
+existing reporter are marked `approved`: today they go straight to ready-for-fix.
+Failed filing keeps the item so the same submission can retry. Cancellation only
+changes the local record; it does not close GitHub issues or stop agents. An agent
+finishing is not proof a fix shipped, so it does not automatically mark work done.
+The legacy request bridge keeps its existing optional token and responses.
+
+`garage schemas --out schemas/v1` writes the SDK's portable JSON contracts.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
