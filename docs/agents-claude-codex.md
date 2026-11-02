@@ -1,4 +1,4 @@
-# Handing work to Claude Code and Codex, on the Mac and in the cloud
+# Garage agents: offering Claude Code, Codex and Devin to users, locally and in the cloud
 
 Status: **design draft for review. No code yet.** Builds on [vision.md](vision.md) (contract 4 work order,
 contract 5a agent result) and stays consistent with the draft `docs/workspace-and-interface.md`
@@ -23,8 +23,126 @@ an OpenAI API key on a throwaway toy repo (see §8).
 - **Headless**: run from a program with no screen or keyboard (e.g. `claude -p`, `codex exec`).
 - **Supervisor**: the part of Garage that starts agent programs on the Mac, watches them, and stops them if they hang.
 - **MCP** (Model Context Protocol): a standard way for an agent to call tools. Garage plans to offer its own MCP server.
+- **Runner**: a machine that picks up Garage jobs and runs the agent there (a Garage Cloud sandbox, or the user's own computer).
+- **Control plane**: the always-on part of Garage that holds accounts, work orders and runs, and hands jobs to runners.
 - **Subscription vs API key**: a subscription is a monthly plan you sign in with (Claude Pro/Max, ChatGPT Plus/Pro);
   an API key is pay-per-use billing per token.
+
+## 0. Product design: what Garage offers its users
+
+Garage is a product. Each user connects GitHub, then sets up **their garage**: which coding agents work for them,
+how those agents sign in, and where runs happen. This section covers the options Garage gives users and the
+architecture behind them. Sections 1–6 are the vendor-by-vendor detail it rests on. Research behind this section
+(other products, vendor terms, sandbox providers) was done from docs only; nothing here was called or paid for.
+
+### 0.1 Three separate choices a user makes
+
+Products that mix these up get stuck, so Garage keeps them separate:
+
+| Choice | Options Garage can offer | Notes |
+|---|---|---|
+| **Agent**: who does the work | Devin, Claude Code, Codex (later: Copilot agent, others) | Same work order in, same result out (contracts 4 / 5a) |
+| **Runner**: where the code runs | **Garage Cloud** (a fresh sandbox Garage starts per run), **Vendor cloud** (the vendor's own hosted agent API), **My machine** (a small Garage runner app on the user's Mac/PC/robot box) | A user can have several; routing rules pick one per run |
+| **Account**: who pays for the AI | **User's API key** (per-token, billed by the vendor), **User's subscription sign-in** (Claude Pro/Max, ChatGPT plan), later maybe **Garage-billed** | Which combinations are allowed depends on vendor terms (0.3) |
+
+Example setup in the Garage UI:
+
+```text
+Agents:   Claude Code  (account: my Claude subscription)
+          Codex        (account: my OpenAI API key)
+          Devin        (account: my Devin org token)
+Runners:  Garage Cloud (default)
+          Studio Mac   (runner app, has: robot-reachy, macos)
+Routing:  test kit needs hardware  -> Studio Mac
+          everything else          -> Garage Cloud, agent: Claude Code
+          fallback if Claude limit hit -> Codex
+```
+
+### 0.2 Cloud is required, and that changes Garage's shape
+
+Today Garage runs on one Mac and polls GitHub because it has no public URL. A product for many users needs a
+**Garage control plane in the cloud** (the always-on part: accounts, repo catalog, work orders, runs, inbox,
+GitHub App webhooks). Then:
+- Runs continue when the user's laptop is closed.
+- The "no public URL" problem goes away: GitHub and vendors can call Garage's webhooks.
+- The user's Mac becomes **one runner among others**: an app that makes an outbound connection to Garage, picks up
+  jobs meant for it, and reports back. Same pattern as GitHub Actions self-hosted runners and Buildkite agents
+  [docs: [GitHub](https://docs.github.com/en/actions/reference/runners/self-hosted-runners),
+  [Buildkite](https://buildkite.com/docs/agent)]. No open ports on the user's network.
+- The current local Garage keeps working as a "local only" mode (control plane and runner on one machine)
+  [inferred].
+
+### 0.3 What vendor terms allow (this decides the Account options)
+
+- **Claude Code, user's subscription, in Garage Cloud:** allowed with conditions. Anthropic lets a platform host
+  the *unmodified* Claude Code binary, including end users signing in with their own Claude account, but "Customers
+  may not pay for, resell, or intermediate Claude usage on their end users' behalf", and the platform can't remove
+  the built-in sign-in options [docs: [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)].
+  So the user signs in inside the sandbox themselves. Garage must not collect a pasted token and must not bill for
+  Claude usage. How to keep that sign-in working across short-lived sandboxes needs Anthropic's confirmation
+  [inferred].
+- **Claude Agent SDK:** third-party products must use API keys, not claude.ai login, unless Anthropic approves
+  [docs: [Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview)]. So if Garage builds on the SDK
+  rather than the CLI, Claude is API-key only.
+- **Codex, user's ChatGPT plan:** OpenAI has a "Sign in with ChatGPT" program that lets an app use the user's plan.
+  It is documented for open-source and locally hosted apps; paid or remotely hosted apps must fill in an interest
+  form [docs: [SIWC](https://developers.openai.com/siwc/token-sharing-open-source)]. So: on the user's own
+  machine their `codex login` is fine; in Garage Cloud use an API key until OpenAI admits Garage [inferred].
+- **API keys** work everywhere for both vendors [docs].
+- **Garage-billed AI:** not allowed for Claude (no reselling); for OpenAI it's normal API resale and needs no
+  special terms, but it isn't needed at launch [inferred].
+- **On the user's own machine** (runner app), the agent runs as the user with their own login, like Conductor or
+  Vibe Kanban [docs: [Conductor](https://www.conductor.build/docs/faq)]. Garage never touches the credentials.
+
+### 0.4 Runner options in detail
+
+| Runner | How it works | Agents | Account options | Hardware | Garage builds |
+|---|---|---|---|---|---|
+| **Garage Cloud sandbox** | Garage starts a fresh sandbox per run (E2B, Daytona, Cloudflare Sandbox, Modal...), clones the branch, runs `claude -p` / `codex exec`, pushes, opens the PR | Claude Code, Codex | API key; Claude subscription with user sign-in (0.3) | no | sandbox images, supervisor, credential vault, cost metering |
+| **Vendor cloud API** | Garage calls the vendor's hosted agent: Devin v3, [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview), [OpenAI Agents API](https://developers.openai.com/api/docs/guides/agents-api/overview) (runs the Codex harness, beta) | Devin, Claude, Codex | API key / org token only | only via the vendor's self-hosted worker | API connectors, GitHub wiring for the agent |
+| **My machine** (runner app) | outbound-only app on the user's Mac claims jobs, makes a worktree, runs the CLI, streams events back | Claude Code, Codex | user's own login or key | **yes** | runner app, job queue with leases, heartbeat, cancel |
+| **GitHub Actions** | Garage adds a workflow to the repo using [`claude-code-action`](https://github.com/anthropics/claude-code-action) / [`codex-action`](https://github.com/openai/codex-action) | Claude Code, Codex | API key (or Claude OAuth token) as a repo secret | only with a self-hosted runner | workflow template, result parsing |
+| **Vendor consumer cloud** (Claude Code on the web, Codex cloud) | user's own vendor app; no public API to start/poll these for another user [inferred] | — | subscription | no | only "open in Claude/Codex" links and branch tracking |
+
+Sandbox providers that publish ready Claude Code and Codex templates: E2B, Daytona, Cloudflare Sandbox [docs:
+[E2B](https://docs.e2b.dev/agents/codex), [Daytona](https://www.daytona.io/docs/en/guides/claude/),
+[Cloudflare](https://developers.cloudflare.com/sandbox/coding-agents/)]. Pricing is per-second CPU and memory.
+
+### 0.5 What similar products do
+
+| Product | Where runs happen | Whose AI account |
+|---|---|---|
+| GitHub Copilot + Claude/Codex partner agents | GitHub Actions compute | Copilot plan (GitHub pays the vendors) [docs](https://docs.github.com/en/copilot/concepts/agents/about-third-party-agents) |
+| Warp cloud agents | Warp-hosted, real Claude Code / Codex; enterprise self-hosted workers | user's provider keys stored as Warp secrets [docs] |
+| Omnara | managed machines, user's machines, or self-hosted | user's keys or managed tokens [docs](https://docs.omnara.com/authentication) |
+| Conductor, Vibe Kanban, Sculptor | user's machine only | user's own CLI login [docs] |
+| Cursor, Factory, Amp, OpenHands | own hosted agent, not Claude Code/Codex CLIs | product plan / credits [docs] |
+| Terragon (hosted Claude Code/Codex sandboxes) | shut down Feb 2026 [docs](https://www.terragonlabs.com/) | — |
+
+Takeaway [inferred]: the products that run the real Claude Code / Codex in the cloud (Warp, Omnara) do it with
+sandboxes they host plus the user's own keys, and they add the user's own machines as workers. That matches
+option A below.
+
+### 0.6 Architecture options
+
+**A. Garage control plane + runners (recommended).** Everything is a job on a queue; runners pick jobs.
+Garage Cloud sandboxes and the user's own machines are both runners; vendor APIs (Devin, Managed Agents,
+OpenAI Agents API) plug in as "runners that bring their own computer". One model covers every combination in 0.1.
+Cost: Garage owns sandbox images and pays for compute (passed on to users), and must hold user keys safely.
+
+**B. Delegate only to vendor APIs.** Garage never runs agent code: Devin v3, Claude Managed Agents, OpenAI Agents
+API. Least to build and no compute bill, but API keys only (no subscriptions), two of the three APIs are in beta,
+and Claude Managed Agents / OpenAI Agents API are *not* Claude Code / Codex CLIs, so behavior differs from what
+users run locally. Hardware only through each vendor's own self-hosted worker.
+
+**C. GitHub Actions as the executor.** Garage writes a workflow into each repo and triggers it. Very little
+infrastructure; compute is on the user's GitHub bill. But no live questions or steering, slow starts, secrets live
+in every repo, and it only fits GitHub.
+
+**D. Local-first app with cloud sync** (Conductor / Vibe Kanban style). Simple and uses subscriptions freely, but
+runs stop when the laptop sleeps. Doesn't meet "cloud is necessary".
+
+A can grow to include B and C as extra runner types, so starting with A doesn't close those doors.
 
 ## 1. What a handoff means
 
@@ -192,6 +310,7 @@ class Capabilities(BaseModel):
     can_cancel: bool
     can_resume: bool          # follow-up turns on the same conversation
     hardware: bool            # can reach this machine's devices
+    accounts: set[Literal["api_key", "subscription_signin", "org_token"]]   # allowed per runner, see 0.3
     cost_model: Literal["subscription", "per_token", "per_session_hour", "acu"]
 
 
@@ -299,31 +418,32 @@ flowchart LR
 
 ## 7. Recommendation and plan
 
-**Build first: local runs for both Codex and Claude Code through one local runner**, with between-turn questions
-and "take over / give back". Reasons:
-- Both CLIs are scriptable today with stable, documented event streams; Codex was tested end to end here.
-- It's the only path that reaches the robot without enterprise features.
-- The hard part (worktree, supervisor, push, PR, questions) is shared, so the second agent is cheap.
-- Cloud options are weaker for a program: Claude Code cloud has no status API and needs a subscription; Codex
-  cloud CLI is experimental and has no cancel or answer command. Start them after local works, tracked through GitHub.
+**Recommendation: option A.** A Garage control plane in the cloud with two runner types built by Garage
+(Garage Cloud sandboxes and the user's own machine), and the Devin connector we already have. Users pick agent,
+runner and account per garage; routing rules pick a runner per work order (hardware test kits go to a machine
+that has the hardware).
 
-Use the **CLIs, not the SDKs, first**: same tool you'd run by hand, works with your own login, and Garage doesn't
-take on the Agent SDK's API-key-only rule. Move to the Agent SDK / Codex app-server later only if we want live
-approvals in the Garage UI.
+Launch options (what a new user can choose on day one):
+- **Claude Code**: Garage Cloud with the user's API key, or the user's machine with their own login. Garage Cloud
+  with a Claude subscription sign-in once we've confirmed how the sign-in works in sandboxes (0.3).
+- **Codex**: Garage Cloud with the user's API key, or the user's machine with their ChatGPT login or key. Apply to
+  OpenAI's Sign in with ChatGPT program for subscription use in Garage Cloud.
+- **Devin**: as today (vendor cloud, user's org token).
 
 **Phases** (each usable on its own):
 
-1. **Connector interface + Run record**: wrap today's Devin client in `AgentConnector`; add `agent`/`place` to the
-   manifest's dispatch section (default `devin`). No behavior change. Tests with fakes.
-2. **Local runner + Codex connector**: worktrees, supervisor (timeouts, idle, concurrency, process groups), event
-   log, push and PR by Garage, 5a via `--output-schema`.
-3. **Claude Code connector** on the same runner (`claude -p --output-format stream-json --json-schema`).
-4. **Questions and human takeover**: `question` in 5a → `needs_info` → answer → resume; `garage take` /
-   `garage give-back`; robot lock and the hardware test kit run by Garage after the agent.
-5. **Cloud connectors**: Codex cloud (`codex cloud exec`, poll `list --json`, apply diff) and Claude Code cloud
-   (`claude --cloud`, poll GitHub); local ↔ cloud moves via the branch (scenarios C, D).
-6. **Live questions and MCP**: Garage MCP tools for local runs; optionally Agent SDK / app-server for live approvals;
-   optionally Claude Managed Agents if we want a cloud Claude with a real API.
+1. **Connector + runner interfaces**: wrap today's Devin client as an `AgentConnector`; add a `Runner` interface
+   (claim job, report events, cancel). Garage's work orders and runs get `agent`, `runner`, `account` fields.
+   No behavior change.
+2. **Runner on the user's machine**: today's local Garage becomes the first runner: worktrees, supervisor, Codex
+   and Claude Code connectors (CLI), Garage pushes and opens the PR. Works with users' own logins.
+3. **Garage control plane in the cloud**: accounts, GitHub App webhooks (PR #3), job queue with leases, the runner
+   app connecting outbound. Local-only mode keeps working.
+4. **Garage Cloud sandboxes**: pick a sandbox provider; per-run sandbox running the same connectors; encrypted
+   per-user key vault; cost limits per run and per user.
+5. **Questions and takeover** across runners: `needs_info` inbox, resume, take over / give back (section 1).
+6. **More runner types**: vendor APIs (Claude Managed Agents, OpenAI Agents API), GitHub Actions; subscription
+   sign-in in the cloud once vendors confirm.
 
 ## 8. What was tested
 
@@ -340,14 +460,17 @@ On an Ubuntu VM with Codex CLI 0.166.0 and an OpenAI API key, on a throwaway toy
 Not tested: anything Claude (no key), Codex SDKs, app-server sessions, Codex cloud tasks, GitHub triggers,
 desktop apps, macOS, hardware.
 
-## 9. Open questions
+## 9. Product decisions
 
-1. **Logins and billing**: run local agents on your subscriptions (Claude Pro/Max, ChatGPT plan) or API keys
-   (pay per use)? Cloud sessions for both vendors need the subscription login.
-2. **Which plans do you have?** Claude Team/Enterprise unlocks self-hosted runners (cloud sessions on the Mac);
-   ChatGPT plan decides Codex cloud access.
-3. **Who opens PRs for local runs**: Garage (recommended: one place for tokens and labels) or the agent via `gh`?
-4. **Questions**: is "agent stops and asks, you answer, it continues" enough for now, or do you want live
-   approvals (agent waits mid-step for your yes/no)?
-5. Is a pay-per-use cloud Claude (Managed Agents API) in scope, or stick with Claude Code?
-6. Default concurrency on the Mac (suggest 2) and timeouts (suggest 60 min wall, 10 min idle).
+1. **Architecture**: A (control plane + runners, recommended), B (vendor APIs only), or C (GitHub Actions)?
+2. **Subscriptions in Garage Cloud at launch**: launch with API keys and users' own machines only, and add
+   subscription sign-in after Anthropic and OpenAI confirm? Or make subscription sign-in a launch requirement,
+   which puts the vendor conversations on the critical path?
+3. **Who pays for cloud compute**: Garage charges for sandbox time (simplest for users), or users connect their own
+   sandbox/cloud account (no compute bill for Garage, more setup for users)?
+4. **CLI or vendor harness API in the cloud**: run the real Claude Code / Codex CLIs in Garage sandboxes (same as
+   local, allows subscriptions), or use Claude Managed Agents / OpenAI Agents API (less to run, API keys only,
+   beta)?
+
+Smaller questions for later: sandbox provider (E2B, Daytona, Cloudflare), default concurrency and timeouts per
+plan, and whether agents may open PRs themselves or Garage always does.
