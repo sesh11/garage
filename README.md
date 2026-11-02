@@ -216,3 +216,7 @@ finishing is not proof a fix shipped, so it does not automatically mark work don
 The legacy request bridge keeps its existing optional token and responses.
 
 `garage schemas --out schemas/v1` writes the SDK's portable JSON contracts.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

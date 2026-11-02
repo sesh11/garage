@@ -7,6 +7,8 @@ name = "garage"
 version = "0.1.0"
 description = "Local incident monitoring and software dispatch service"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
     "garage-sdk",
     "httpx",
