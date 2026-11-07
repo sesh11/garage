@@ -17,6 +17,7 @@ from garage_sdk import emit, scrub_text
 from garage.report import READY, FIXING, LABELS, DISPATCHED
 from garage.tracker import Tracker, IssueRecord
 from garage.agents.base import CodingAgent, SessionStatus
+from garage.agents.local import LocalCapacityError
 from garage_sdk.manifest import Manifest
 
 
@@ -269,6 +270,8 @@ class Dispatcher:
                 structured_output_schema=OUTPUT_SCHEMA,
                 repos=[repo],
             )
+        except LocalCapacityError:
+            return None
         except Exception as exc:
             detail = _error_detail(exc)
             logger.error("Could not start a fix session for #%d: %s", issue.number, detail)
@@ -287,7 +290,7 @@ class Dispatcher:
         await self.tracker.add_labels(record.issue, [DISPATCHED, FIXING])
         await self.tracker.comment(
             record.issue,
-            f"Started a Devin fix session: {record.session_url}\n\n"
+            f"Started a coding-agent fix session: {record.session_url}\n\n"
             f"Remove `{DISPATCHED}` to allow another attempt.\n\n"
             f"<!-- factory-session: {record.session_id} -->",
         )
@@ -321,7 +324,7 @@ class Dispatcher:
             if self.dry_run:
                 done.append(f"report outcome on #{record.issue}")
                 continue
-            lines = [f"Devin fix session ended ({status.value}): {record.session_url}"]
+            lines = [f"Coding-agent fix session ended ({status.value}): {record.session_url}"]
             lines.append(f"Pull request: {pr_url}" if pr_url else "No pull request was opened.")
             test_result = output.get("test_result")
             if not isinstance(test_result, str):

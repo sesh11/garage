@@ -2,10 +2,12 @@
 
 import os
 import sys
+import json
 import asyncio
 import logging
 import argparse
 import ipaddress
+from typing import Literal, cast
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from collections.abc import Sequence
@@ -18,11 +20,13 @@ from garage_sdk import configure
 from garage.github import GitHubIssues
 from garage.report import READY, DEFAULT_ATTRIBUTION, DEFAULT_REQUEST_ATTRIBUTION, RequestLogger, IncidentReporter
 from garage.tracker import Tracker, IssueRecord
-from garage.dispatch import Dispatcher, build_fix_prompt
+from garage.dispatch import OUTPUT_SCHEMA, Dispatcher, build_fix_prompt
 from garage.requests import RequestBridge
 from garage.settings import GarageSettings, settings_from_env
 from garage_sdk.events import Event, EventLog
+from garage.agents.base import CodingAgent
 from garage.agents.devin import DevinClient
+from garage.agents.local import LocalAgent
 from garage.incidents.base import Detector, Incident, parse_duration
 from garage.incidents.monitor import IncidentMonitor
 from garage.incidents.registry import build_detector
@@ -96,27 +100,40 @@ def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False, offline
     """Return the dispatcher when enabled and configured."""
     if not settings.dispatch and not dry_run:
         return None
-    missing = [
-        name
-        for name, value in (
-            ("GARAGE_GITHUB_TOKEN", settings.github_token),
-            ("DEVIN_API_KEY", settings.devin_api_key),
-            ("DEVIN_ORG_ID", settings.devin_org_id),
-        )
-        if not value
-    ]
+    selected = settings.manifest.dispatch.agent
+    if selected not in ("devin", "claude-code", "codex"):
+        raise ValueError(f"unknown dispatch agent: {selected}")
+    required = [("GARAGE_GITHUB_TOKEN", settings.github_token)]
+    if selected == "devin":
+        required += [("DEVIN_API_KEY", settings.devin_api_key), ("DEVIN_ORG_ID", settings.devin_org_id)]
+    missing = [name for name, value in required if not value]
     if missing and not dry_run:
         logger.warning("GARAGE_DISPATCH is on but %s is not set; not dispatching.", ", ".join(missing))
         return None
     tracker: Tracker = (
         _OfflineTracker(settings.repo) if offline else GitHubIssues(settings.repo, settings.github_token)
     )
-    agent = DevinClient(
-        settings.devin_api_key or "",
-        settings.devin_org_id or "",
-        base_url=settings.devin_api_base_url,
-        max_acu=settings.devin_max_acu,
-    )
+    agent: CodingAgent
+    if selected == "devin":
+        agent = DevinClient(
+            settings.devin_api_key or "",
+            settings.devin_org_id or "",
+            base_url=settings.devin_api_base_url,
+            max_acu=settings.devin_max_acu,
+        )
+    else:
+        agent = LocalAgent(
+            cast(Literal["codex", "claude-code"], selected),
+            settings.local_repo_path or settings.manifest_dir,
+            settings.data_dir,
+            base_branch=settings.manifest.dispatch.base_branch,
+            cli_path=settings.codex_path if selected == "codex" else settings.claude_path,
+            model=settings.local_model,
+            allowed_tools=settings.claude_allowed_tools,
+            timeout_s=settings.local_timeout_s,
+            max_concurrent=settings.local_max_concurrent,
+            github=GitHubIssues(settings.repo, settings.github_token) if not offline else None,
+        )
     return Dispatcher(
         tracker,
         agent,
@@ -253,6 +270,61 @@ def _serve(settings: GarageSettings, host: str, port: int) -> int:
     return 0
 
 
+async def _handoff(args: argparse.Namespace) -> int:
+    if not args.task.strip():
+        raise ValueError("task must not be empty")
+    repo = os.getenv("GARAGE_REPO")
+    token = os.getenv("GARAGE_GITHUB_TOKEN")
+    if not args.no_push and (not repo or not token):
+        raise ValueError("set GARAGE_REPO and GARAGE_GITHUB_TOKEN, or use --no-push")
+    agent = LocalAgent(
+        args.agent,
+        args.repo_path,
+        Path(os.getenv("GARAGE_DATA_DIR", "~/.garage")),
+        base_branch=args.base,
+        cli_path=os.getenv("GARAGE_CODEX_PATH" if args.agent == "codex" else "GARAGE_CLAUDE_PATH"),
+        model=args.model or os.getenv("GARAGE_LOCAL_MODEL"),
+        allowed_tools=os.getenv("GARAGE_CLAUDE_ALLOWED_TOOLS", "Read,Edit,Write,Bash,Glob,Grep"),
+        timeout_s=parse_duration(os.getenv("GARAGE_LOCAL_TIMEOUT", "1h")).total_seconds(),
+        max_concurrent=int(os.getenv("GARAGE_LOCAL_MAX_CONCURRENT", "2")),
+        github=GitHubIssues(repo, token) if repo and token else None,
+        no_push=args.no_push,
+    )
+    created = await agent.create_session(
+        args.task,
+        title=args.task.splitlines()[0][:80],
+        tags=[],
+        structured_output_schema=OUTPUT_SCHEMA,
+    )
+    print(f"Run: {created.session_id}\nFiles: {created.url}", flush=True)
+    while True:
+        state = await agent.get_session(created.session_id)
+        if args.detach or state.status != "working":
+            print(f"Status: {state.status}\n{state.status_detail}")
+            print(json.dumps(state.structured_output, indent=2))
+            if args.detach:
+                print("Detached. Poll with: garage handoff-status " + created.session_id)
+            return 0 if state.status in ("working", "finished") else 1
+        await asyncio.sleep(0.25)
+
+
+async def _handoff_status(args: argparse.Namespace) -> int:
+    directory = Path(os.getenv("GARAGE_DATA_DIR", "~/.garage")).expanduser().resolve()
+    agent = LocalAgent(
+        "codex",
+        Path.cwd(),
+        directory,
+        github=(
+            GitHubIssues(os.environ["GARAGE_REPO"], os.getenv("GARAGE_GITHUB_TOKEN"))
+            if os.getenv("GARAGE_REPO")
+            else None
+        ),
+    )
+    state = await agent.get_session(args.run_id)
+    print(state.model_dump_json(indent=2))
+    return 0 if state.status in ("working", "finished") else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the Garage CLI."""
     load_dotenv()
@@ -276,10 +348,25 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--host")
     serve_parser.add_argument("--port", type=int)
 
+    handoff = subparsers.add_parser("handoff", help="hand one task to a local coding CLI")
+    handoff.add_argument("--agent", choices=("codex", "claude-code"), required=True)
+    handoff.add_argument("--repo-path", type=Path, required=True)
+    handoff.add_argument("--base", default="main")
+    handoff.add_argument("--model")
+    handoff.add_argument("--no-push", action="store_true")
+    handoff.add_argument("--detach", action="store_true")
+    handoff.add_argument("task")
+    status = subparsers.add_parser("handoff-status", help="recover and poll a detached local run")
+    status.add_argument("run_id")
+
     args = parser.parse_args(argv)
     log_level = logging.getLevelNamesMapping().get(os.getenv("GARAGE_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
+        if args.command == "handoff":
+            return asyncio.run(_handoff(args))
+        if args.command == "handoff-status":
+            return asyncio.run(_handoff_status(args))
         settings = settings_from_env(args.manifest)
         if args.command == "report":
             dry_run = args.dry_run or args.offline
@@ -302,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             dispatcher = build_dispatcher(settings, dry_run=dry_run, offline=args.offline)
             if dispatcher is None:
                 print(
-                    "needs GARAGE_GITHUB_TOKEN, DEVIN_API_KEY and DEVIN_ORG_ID in .env (or use --dry-run)",
+                    "needs GARAGE_GITHUB_TOKEN and agent credentials (Devin: DEVIN_API_KEY and DEVIN_ORG_ID); or --dry-run",
                     file=sys.stderr,
                 )
                 return 2

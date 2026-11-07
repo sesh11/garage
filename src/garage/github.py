@@ -143,3 +143,18 @@ class GitHubIssues:
     async def comment(self, number: int, body: str) -> None:
         """Post a comment on an issue."""
         await self._request("POST", f"{self._repo_path}/issues/{number}/comments", {"body": body})
+
+    async def create_pull_request(self, title: str, body: str, *, head: str, base: str) -> str:
+        """Return an existing branch PR or open one, making publication retryable."""
+        owner = self.repo.split("/")[0]
+        response = await self._request(
+            "GET",
+            f"{self._repo_path}/pulls?state=all&head={quote(owner + ':' + head, safe='')}&base={quote(base, safe='')}",
+        )
+        existing = response.json()
+        if existing:
+            return str(existing[0]["html_url"])
+        response = await self._request(
+            "POST", f"{self._repo_path}/pulls", {"title": title, "body": body, "head": head, "base": base}
+        )
+        return str(response.json()["html_url"])

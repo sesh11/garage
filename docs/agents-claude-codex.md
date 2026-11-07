@@ -1,6 +1,8 @@
 # Garage agents: offering Claude Code, Codex and Devin to users, locally and in the cloud
 
-Status: **design draft for review. No code yet.** Builds on [vision.md](vision.md) (contract 4 work order,
+Status: **local CLI implementation; cloud deferred.** Garage on the user's Mac can start Claude Code or Codex
+in a separate worktree, track the detached process, and collect its result. Section 0 keeps the later product
+direction, not the scope of this implementation. Builds on [vision.md](vision.md) (contract 4 work order,
 contract 5a agent result) and stays consistent with the draft `docs/workspace-and-interface.md`
 ([PR #3](https://github.com/sesh11/garage/pull/3)): one API, an MCP server for every client, a "Run" noun, GitHub App.
 
@@ -418,32 +420,27 @@ flowchart LR
 
 ## 7. Recommendation and plan
 
-**Recommendation: option A.** A Garage control plane in the cloud with two runner types built by Garage
-(Garage Cloud sandboxes and the user's own machine), and the Devin connector we already have. Users pick agent,
-runner and account per garage; routing rules pick a runner per work order (hardware test kits go to a machine
-that has the hardware).
+**Recommendation now: local-first on the Mac.** Keep the existing `CodingAgent` protocol and Dispatcher.
+Use one detached local runner for `claude -p` and `codex exec --json`; keep Devin as the default connector.
+No cloud account service, sandbox fleet, new SDK interface, or cross-machine routing in this step.
 
-Launch options (what a new user can choose on day one):
-- **Claude Code**: Garage Cloud with the user's API key, or the user's machine with their own login. Garage Cloud
-  with a Claude subscription sign-in once we've confirmed how the sign-in works in sandboxes (0.3).
-- **Codex**: Garage Cloud with the user's API key, or the user's machine with their ChatGPT login or key. Apply to
-  OpenAI's Sign in with ChatGPT program for subscription use in Garage Cloud.
-- **Devin**: as today (vendor cloud, user's org token).
+1. **Local handoff**: create a worktree and new branch from `dispatch.base_branch`. Save the prompt, schema,
+   stdout events, stderr and exit code under Garage's data directory. A separate process group survives Garage
+   restarts; it does not survive shutdown or make progress while the Mac sleeps.
+2. **Track and return**: read those files after restart, enforce a wall-clock deadline and local concurrency cap,
+   validate the structured result, then let Garage commit, push and open the PR. `garage handoff --no-push`
+   keeps the run local and works without GitHub or a manifest.
+3. **Takeover**: record the CLI's session/thread ID and show a resume command. Stop the active run before a human
+   resumes it so there is only one writer. Live approval/question relays and automatic follow-up turns are deferred.
+4. **Later cloud direction**: keep section 0's product plan. Hosted compute, user accounts, remote runners and
+   vendor managed APIs need separate implementation and auth decisions; none are needed for this local path.
 
-**Phases** (each usable on its own):
-
-1. **Connector + runner interfaces**: wrap today's Devin client as an `AgentConnector`; add a `Runner` interface
-   (claim job, report events, cancel). Garage's work orders and runs get `agent`, `runner`, `account` fields.
-   No behavior change.
-2. **Runner on the user's machine**: today's local Garage becomes the first runner: worktrees, supervisor, Codex
-   and Claude Code connectors (CLI), Garage pushes and opens the PR. Works with users' own logins.
-3. **Garage control plane in the cloud**: accounts, GitHub App webhooks (PR #3), job queue with leases, the runner
-   app connecting outbound. Local-only mode keeps working.
-4. **Garage Cloud sandboxes**: pick a sandbox provider; per-run sandbox running the same connectors; encrypted
-   per-user key vault; cost limits per run and per user.
-5. **Questions and takeover** across runners: `needs_info` inbox, resume, take over / give back (section 1).
-6. **More runner types**: vendor APIs (Claude Managed Agents, OpenAI Agents API), GitHub Actions; subscription
-   sign-in in the cloud once vendors confirm.
+Claude uses `--output-format stream-json --verbose --json-schema`, `--permission-mode dontAsk` and configurable
+`--allowedTools` (default Read, Edit, Write, Bash, Glob, Grep). Allowed tools can edit and run tests without a
+prompt; other permission requests are denied. This is not an OS sandbox. See the current
+[headless guide](https://code.claude.com/docs/en/headless) and [CLI flags](https://code.claude.com/docs/en/cli-reference).
+Do not use `--bare` by default: it ignores subscription credentials. Claude flags are doc-checked, fake-tested,
+not exercised against Anthropic here. Real Mac execution still needs verification.
 
 ## 8. What was tested
 
