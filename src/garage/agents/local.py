@@ -217,10 +217,11 @@ class LocalAgent:
             _save(directory / "run.json", config)
         return CreatedSession(session_id=run_id, url=directory.as_uri(), status="working")
 
-    def _events(self, directory: Path) -> tuple[str | None, bool, object]:
+    def _events(self, directory: Path) -> tuple[str | None, bool, object, str]:
         own_id = None
         failed = False
         output: object = None
+        errors: list[str] = []
         path = directory / "events.jsonl"
         for line in path.read_text().splitlines() if path.exists() else []:
             try:
@@ -233,10 +234,15 @@ class LocalAgent:
                 own_id = event.get("thread_id")
             elif isinstance(event.get("session_id"), str):
                 own_id = event["session_id"]
-            failed |= event.get("type") in ("turn.failed", "error") or event.get("is_error") is True
+            failed |= event.get("type") == "turn.failed"
+            if event.get("type") == "error":
+                message = event.get("message") or event.get("error")
+                if message:
+                    errors.append(message if isinstance(message, str) else json.dumps(message))
             if event.get("type") == "result":
+                failed |= event.get("is_error") is True
                 output = event.get("structured_output")
-        return own_id, failed, output
+        return own_id, failed, output, "; ".join(errors)
 
     async def cancel_session(self, session_id: str, *, expired: bool = False) -> None:
         """Stop this run's process group with bounded signal escalation."""
@@ -255,7 +261,7 @@ class LocalAgent:
         """Recover state from disk, validate a result, and publish successful work."""
         directory = self._directory(session_id)
         config = json.loads((directory / "run.json").read_text())
-        own_id, failed, output = self._events(directory)
+        own_id, failed, output, error_detail = self._events(directory)
         takeover = ""
         if own_id:
             executable = "codex" if config["agent"] == "codex" else "claude"
@@ -264,6 +270,8 @@ class LocalAgent:
         config["takeover_command"] = takeover
         config["agent_session_id"] = own_id
         detail = f"branch: {config['branch']}; takeover: {takeover or 'pending CLI session id'}"
+        if error_detail:
+            detail += f"; CLI notices: {error_detail}"
         state = SessionState(session_id=session_id, status="working", status_detail=detail)
         if (directory / "expired").exists():
             state.status = "expired"

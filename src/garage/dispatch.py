@@ -49,6 +49,13 @@ class DispatchRecord(BaseModel):
     status: str | None = None
     pr_url: str | None = None
 
+    @property
+    def public_reference(self) -> str:
+        """Describe local sessions without publishing filesystem paths."""
+        if self.session_url.lower().startswith("file:"):
+            return f"local run {self.session_id}, branch garage/{self.session_id}"
+        return self.session_url
+
 
 class DispatchLedger(BaseModel):
     """Every dispatch this machine has made, newest last."""
@@ -290,7 +297,7 @@ class Dispatcher:
         await self.tracker.add_labels(record.issue, [DISPATCHED, FIXING])
         await self.tracker.comment(
             record.issue,
-            f"Started a coding-agent fix session: {record.session_url}\n\n"
+            f"Started a coding-agent fix session: {record.public_reference}\n\n"
             f"Remove `{DISPATCHED}` to allow another attempt.\n\n"
             f"<!-- factory-session: {record.session_id} -->",
         )
@@ -324,7 +331,7 @@ class Dispatcher:
             if self.dry_run:
                 done.append(f"report outcome on #{record.issue}")
                 continue
-            lines = [f"Coding-agent fix session ended ({status.value}): {record.session_url}"]
+            lines = [f"Coding-agent fix session ended ({status.value}): {record.public_reference}"]
             lines.append(f"Pull request: {pr_url}" if pr_url else "No pull request was opened.")
             test_result = output.get("test_result")
             if not isinstance(test_result, str):

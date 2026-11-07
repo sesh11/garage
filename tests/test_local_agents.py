@@ -69,6 +69,11 @@ if mode == 'failed':
     sys.exit(0)
 if mode == 'nonzero':
     sys.exit(7)
+if mode == 'retry':
+    print(json.dumps({'type':'error', 'message':'Stream interrupted; reconnecting'}), flush=True)
+if mode == 'claude_error':
+    print(json.dumps({'type':'result', 'is_error':True}), flush=True)
+    sys.exit(0)
 if mode == 'slow':
     time.sleep(0.5)
 Path('code.py').write_text('fixed\\n')
@@ -142,6 +147,25 @@ async def test_failed_results(
     assert state.status == "failed"
     assert state.structured_output is None
     assert git(repo, "status", "--porcelain") == ""
+
+
+async def test_codex_nonfatal_error(
+    repo: Path, tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MODE", "retry")
+    runner = agent(repo, tmp_path, fake_cli)
+    state = await finish(runner, await start(runner))
+    assert state.status == "finished"
+    assert state.structured_output is not None
+    assert "Stream interrupted; reconnecting" in (state.status_detail or "")
+
+
+async def test_claude_result_error(
+    repo: Path, tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MODE", "claude_error")
+    runner = agent(repo, tmp_path, fake_cli, "claude-code")
+    assert (await finish(runner, await start(runner))).status == "failed"
 
 
 async def test_timeout_enforced_without_polling(
@@ -238,6 +262,41 @@ async def test_dispatch_capacity_leaves_issue_queued(
         await runner.cancel_session(run_id)
 
 
+@pytest.mark.parametrize("name", ["codex", "claude-code"])
+async def test_dispatch_comments_hide_local_paths(repo: Path, tmp_path: Path, fake_cli: Path, name: str) -> None:
+    runner = agent(repo, tmp_path, fake_cli, name)
+    tracker = FakeTracker()
+    tracker.issues.append(
+        IssueRecord(
+            number=1,
+            url="https://example.com/1",
+            state="open",
+            title="Fix",
+            body="",
+            labels=[READY],
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    dispatcher = Dispatcher(
+        tracker,
+        runner,
+        tmp_path / "ledger.json",
+        manifest=settings_from_env(example_manifest()).manifest,
+        interval_s=60,
+        dry_run=False,
+    )
+    await dispatcher.poll_once()
+    record = dispatcher._load_ledger().records[0]
+    assert record.session_url.startswith("file://")
+    assert (await finish(runner, record.session_id)).status == "finished"
+    await dispatcher.poll_once()
+    assert len(tracker.comments) == 2
+    for _, body in tracker.comments:
+        assert f"local run {record.session_id}, branch garage/{record.session_id}" in body
+        assert "file:" not in body
+        assert str(tmp_path) not in body
+
+
 async def test_publish_commits_pushes_and_reuses_pr(repo: Path, tmp_path: Path, fake_cli: Path) -> None:
     remote = tmp_path / "remote.git"
     subprocess.check_call(["git", "init", "--bare", str(remote)])
@@ -273,6 +332,7 @@ def test_direct_handoff_without_manifest(
     assert cli.main(["handoff", "--agent", "codex", "--repo-path", str(repo), "--no-push", "fix code"]) == 0
     output = capsys.readouterr().out
     assert "Status: finished" in output
+    assert (tmp_path / "direct" / "runs").as_uri() in output
     assert "codex resume thread-123" in output
     assert '"test_result": "passed"' in output
 
