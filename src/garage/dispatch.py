@@ -277,8 +277,10 @@ class Dispatcher:
                 structured_output_schema=OUTPUT_SCHEMA,
                 repos=[repo],
             )
-        except LocalCapacityError:
-            return None
+        except LocalCapacityError as exc:
+            logger.warning("Deferred #%d: %s; will retry on the next poll", issue.number, exc)
+            emit("factory.dispatch_deferred", "factory", "warning", issue=issue.number, reason=str(exc))
+            return f"deferred #{issue.number}: {exc}; will retry on the next poll"
         except Exception as exc:
             detail = _error_detail(exc)
             logger.error("Could not start a fix session for #%d: %s", issue.number, detail)

@@ -254,7 +254,7 @@ def test_dispatcher_selection(name: str, monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 async def test_dispatch_capacity_leaves_issue_queued(
-    repo: Path, tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch
+    repo: Path, tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setenv("FAKE_MODE", "hang")
     runner = agent(repo, tmp_path, fake_cli, max_concurrent=1)
@@ -280,7 +280,10 @@ async def test_dispatch_capacity_leaves_issue_queued(
         dry_run=False,
     )
     try:
-        assert await dispatcher.poll_once() == []
+        assert await dispatcher.poll_once() == [
+            "deferred #1: local execution slots are full; will retry on the next poll"
+        ]
+        assert "Deferred #1: local execution slots are full" in caplog.text
         assert tracker.issues[0].labels == [READY]
         assert not (tmp_path / "ledger.json").exists()
     finally:
