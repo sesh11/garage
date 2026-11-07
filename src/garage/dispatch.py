@@ -17,6 +17,7 @@ from garage_sdk import emit, scrub_text
 from garage.report import READY, FIXING, LABELS, DISPATCHED
 from garage.tracker import Tracker, IssueRecord
 from garage.agents.base import CodingAgent, SessionStatus
+from garage.agents.local import LocalCapacityError
 from garage_sdk.manifest import Manifest
 
 
@@ -47,6 +48,13 @@ class DispatchRecord(BaseModel):
     done: bool = False
     status: str | None = None
     pr_url: str | None = None
+
+    @property
+    def public_reference(self) -> str:
+        """Describe local sessions without publishing filesystem paths."""
+        if self.session_url.lower().startswith("file:"):
+            return f"local run {self.session_id}, branch garage/{self.session_id}"
+        return self.session_url
 
 
 class DispatchLedger(BaseModel):
@@ -269,6 +277,10 @@ class Dispatcher:
                 structured_output_schema=OUTPUT_SCHEMA,
                 repos=[repo],
             )
+        except LocalCapacityError as exc:
+            logger.warning("Deferred #%d: %s; will retry on the next poll", issue.number, exc)
+            emit("factory.dispatch_deferred", "factory", "warning", issue=issue.number, reason=str(exc))
+            return f"deferred #{issue.number}: {exc}; will retry on the next poll"
         except Exception as exc:
             detail = _error_detail(exc)
             logger.error("Could not start a fix session for #%d: %s", issue.number, detail)
@@ -287,7 +299,7 @@ class Dispatcher:
         await self.tracker.add_labels(record.issue, [DISPATCHED, FIXING])
         await self.tracker.comment(
             record.issue,
-            f"Started a Devin fix session: {record.session_url}\n\n"
+            f"Started a coding-agent fix session: {record.public_reference}\n\n"
             f"Remove `{DISPATCHED}` to allow another attempt.\n\n"
             f"<!-- factory-session: {record.session_id} -->",
         )
@@ -321,7 +333,7 @@ class Dispatcher:
             if self.dry_run:
                 done.append(f"report outcome on #{record.issue}")
                 continue
-            lines = [f"Devin fix session ended ({status.value}): {record.session_url}"]
+            lines = [f"Coding-agent fix session ended ({status.value}): {record.public_reference}"]
             lines.append(f"Pull request: {pr_url}" if pr_url else "No pull request was opened.")
             test_result = output.get("test_result")
             if not isinstance(test_result, str):

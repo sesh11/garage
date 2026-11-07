@@ -165,6 +165,40 @@ waiting for the next dispatch interval. `GET /api/requests/{number}` reports dis
 }
 ```
 
+## Local Claude Code and Codex
+
+Install and sign in to `claude` or `codex` on the machine running Garage. No Devin credentials are needed for
+these agents. Start one task without an issue or manifest:
+
+```sh
+garage handoff --agent codex --repo-path ~/src/project --base main --no-push "Fix the failing test"
+garage handoff --agent claude-code --repo-path ~/src/project --detach "Fix the failing test"
+garage handoff-status <run-id>
+```
+
+Each run gets a new `garage/<run-id>` branch and a worktree in `~/.garage/worktrees/<run-id>`; the source
+checkout is left alone. Garage saves inputs, JSONL events, stderr and exit status in `~/.garage/runs/<run-id>`.
+The detached supervisor survives Garage restarts and enforces the timeout, but cannot run while the machine
+is asleep or off. Poll detached runs with `handoff-status` to collect the result and publish the PR.
+Status includes the branch and CLI resume command once the session ID is available. Stop a running session
+before resuming it manually; the Python runner exposes `cancel_session(run_id)`.
+
+`--no-push` commits changes only in the run's local branch. Otherwise set `GARAGE_REPO=owner/repo` and
+`GARAGE_GITHUB_TOKEN`; Garage pushes to `origin` and opens the PR itself. The repository needs a configured git
+author. Runs and worktrees are retained for inspection; remove them with `git worktree remove` when done.
+
+For issue dispatch, set `agent = "claude-code"` or `agent = "codex"` under `[dispatch]` in `garage.toml`
+(`"devin"` remains the default). The manifest directory is the source checkout unless `GARAGE_LOCAL_REPO_PATH`
+overrides it; `dispatch.base_branch` selects the starting branch. Set `GARAGE_DISPATCH=1` and the GitHub token.
+Agent credentials come from the CLI's normal login/environment, not Garage's Devin settings.
+
+Local settings: `GARAGE_DATA_DIR` (default `~/.garage`), `GARAGE_LOCAL_TIMEOUT` (default `1h`),
+`GARAGE_LOCAL_MAX_CONCURRENT` (default `2`, shared across both CLIs), `GARAGE_CODEX_PATH`, `GARAGE_CLAUDE_PATH`,
+`GARAGE_LOCAL_MODEL` (or handoff `--model`) and `GARAGE_CLAUDE_ALLOWED_TOOLS`
+(default `Read,Edit,Write,Bash,Glob,Grep`). Claude denies unapproved tools without asking; allowing Bash permits
+arbitrary commands as your user. A worktree isolates git changes, not filesystem access or secrets. Use trusted
+tasks/repositories. Cloud execution and live question relays are deferred.
+
 ## Local checks
 
 Run from a checkout:

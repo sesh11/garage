@@ -35,6 +35,13 @@ class GarageSettings:
     host: str
     port: int
     bridge_token: str | None
+    local_timeout_s: float = 3600
+    local_max_concurrent: int = 2
+    codex_path: str = "codex"
+    claude_path: str = "claude"
+    local_model: str | None = None
+    claude_allowed_tools: str = "Read,Edit,Write,Bash,Glob,Grep"
+    local_repo_path: Path | None = None
 
 
 def _duration_env(name: str, default: str) -> float:
@@ -118,4 +125,11 @@ def settings_from_env(manifest_path: Path | None = None) -> GarageSettings:
         host=os.getenv("GARAGE_HOST", "127.0.0.1"),
         port=_int_env("GARAGE_PORT", 8770),
         bridge_token=os.getenv("GARAGE_BRIDGE_TOKEN") or None,
+        local_timeout_s=_duration_env("GARAGE_LOCAL_TIMEOUT", "1h"),
+        local_max_concurrent=_int_env("GARAGE_LOCAL_MAX_CONCURRENT", 2),
+        codex_path=os.getenv("GARAGE_CODEX_PATH", "codex"),
+        claude_path=os.getenv("GARAGE_CLAUDE_PATH", "claude"),
+        local_model=os.getenv("GARAGE_LOCAL_MODEL") or None,
+        claude_allowed_tools=os.getenv("GARAGE_CLAUDE_ALLOWED_TOOLS", "Read,Edit,Write,Bash,Glob,Grep"),
+        local_repo_path=_manifest_relative_path(os.getenv("GARAGE_LOCAL_REPO_PATH"), manifest_dir),
     )
