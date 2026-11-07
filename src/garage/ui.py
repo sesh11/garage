@@ -6,15 +6,18 @@ import logging
 import ipaddress
 from pathlib import Path
 from datetime import datetime, timezone
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence, Awaitable
 
 from fastapi import FastAPI, Request
 from pydantic import Field, BaseModel, ConfigDict, AwareDatetime, ValidationError, field_validator
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import Response, FileResponse, JSONResponse, RedirectResponse
 
+from garage.api import router
 from garage_sdk import emit
+from garage.store import Store
 from garage.report import IncidentReporter
 from garage.tracker import IssueRecord
+from garage_sdk.api import IssueLink, ItemState, ClientKind, SubmitWork
 from garage.requests import Request as GarageRequest
 from garage.requests import RequestBridge
 from garage_sdk.events import EventLog
@@ -47,6 +50,7 @@ def create_app(
     detector: Detector | None,
     reporter: IncidentReporter | None = None,
     bridge: RequestBridge | None = None,
+    store: Store | None = None,
     allowed_clients: frozenset[str] = frozenset({"127.0.0.1", "::1"}),
     allowed_hosts: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"}),
 ) -> FastAPI:
@@ -144,7 +148,9 @@ def create_app(
             return None
         return hostname.lower(), port if separator else None
 
-    def check_bridge_request(request: Request, *, require_json: bool = False) -> JSONResponse | None:
+    def check_bridge_request(
+        request: Request, *, require_json: bool = False, bridge_auth: bool = True
+    ) -> JSONResponse | None:
         if request.client is None or request.client.host not in allowed_clients:
             return JSONResponse(status_code=403, content={"error": "loopback only"})
 
@@ -163,7 +169,7 @@ def create_app(
         if fetch_site is not None and fetch_site not in {"same-origin", "none"}:
             return JSONResponse(status_code=403, content={"error": "cross-origin request rejected"})
 
-        token = bridge.bridge_token if bridge is not None else None
+        token = bridge.bridge_token if bridge is not None and bridge_auth else None
         if token is not None:
             authorization = request.headers.get("authorization", "")
             prefix = "Bearer "
@@ -227,11 +233,23 @@ def create_app(
         payload = parse_request(body)
         if isinstance(payload, JSONResponse):
             return payload
+        item = None
+        if store is not None:
+            # Legacy repository syntax remains accepted by the bridge unchanged.
+            try:
+                work = SubmitWork(
+                    id=payload.id, text=payload.request, repo=payload.repository, created_at=payload.created_at
+                )
+            except ValidationError:
+                work = SubmitWork(id=payload.id, text=payload.request, created_at=payload.created_at)
+            item, _ = store.submit("legacy-bridge", ClientKind.app, work, work.repo)
         if bridge is None or not bridge.enabled:
             return {"issue": None}
         try:
             issue = await bridge.file(request_model(payload))
         except Exception as exc:
+            if store is not None and item is not None:
+                store.save(item, "legacy-bridge", "file_failed", {"exc_type": type(exc).__name__})
             emit(
                 "factory.report_failed",
                 "factory",
@@ -241,6 +259,10 @@ def create_app(
                 exc_type=type(exc).__name__,
             )
             return JSONResponse(status_code=502, content={"error": "issue tracker request failed"})
+        if store is not None and item is not None and issue is not None:
+            item.issue = IssueLink(number=issue.number, url=issue.url)
+            item.state = ItemState.approved
+            store.save(item, "legacy-bridge", "file_success")
         return issue_response(issue)
 
     @app.get("/api/requests/{number}", response_model=None)
@@ -286,6 +308,32 @@ def create_app(
                 exc_type=type(exc).__name__,
             )
             return JSONResponse(status_code=502, content={"error": "issue tracker request failed"})
+        if store is not None:
+            for item in store.items():
+                if item.issue is not None and item.issue.number == issue_number:
+                    item.state = ItemState.running
+                    store.save(item, "legacy-bridge", "fixing")
         return {"ok": True}
 
+    @app.middleware("http")
+    async def protect_inbox(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        if request.url.path == "/v1" or request.url.path.startswith("/v1/"):
+            denied = check_bridge_request(request, bridge_auth=False)
+            if denied is not None:
+                return denied
+            if store is None:
+                return JSONResponse(status_code=503, content={"error": "inbox unavailable"})
+            header = request.headers.get("authorization", "")
+            if not header.startswith("Bearer ") or store.authenticate(header[7:]) is None:
+                return JSONResponse(status_code=401, content={"error": "unauthorized"})
+        return await call_next(request)
+
+    app.include_router(
+        router(
+            store,
+            bridge,
+            lambda request, require_json: check_bridge_request(request, require_json=require_json, bridge_auth=False),
+            read_limited_body,
+        )
+    )
     return app

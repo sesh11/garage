@@ -1,0 +1,14 @@
+{
+  "description": "An API error.",
+  "properties": {
+    "error": {
+      "title": "Error",
+      "type": "string"
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "title": "ApiError",
+  "type": "object"
+}

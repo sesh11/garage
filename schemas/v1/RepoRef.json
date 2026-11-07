@@ -1,0 +1,23 @@
+{
+  "description": "A repository attached to an item.",
+  "properties": {
+    "full_name": {
+      "title": "Full Name",
+      "type": "string"
+    },
+    "role": {
+      "default": "primary",
+      "enum": [
+        "primary",
+        "also"
+      ],
+      "title": "Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "full_name"
+  ],
+  "title": "RepoRef",
+  "type": "object"
+}

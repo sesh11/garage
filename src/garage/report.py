@@ -140,6 +140,7 @@ class IncidentReporter:
         dry_run: bool = False,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         attribution: str = DEFAULT_ATTRIBUTION,
+        on_filed: Callable[[Incident, IssueRecord, bool], None] | None = None,
     ) -> None:
         """Configure the GitHub client, safety caps, and dry-run mode."""
         self.issues = issues
@@ -148,6 +149,7 @@ class IncidentReporter:
         self.dry_run = dry_run
         self.clock = clock
         self.attribution = attribution
+        self.on_filed = on_filed
         self.actions: list[str] = []
         self._index: dict[str, IssueRecord] | None = None
         self._labels_ready = False
@@ -280,6 +282,8 @@ class IncidentReporter:
         if self.dry_run:
             return f"open [{', '.join(labels)}]: {title}"
         issue = await self.issues.create_issue(title, body, labels)
+        if self.on_filed is not None:
+            self.on_filed(incident, issue, incident.ready)
         index[incident.fingerprint] = issue
         self._last_edit[issue.number] = now
         emit(
@@ -310,6 +314,8 @@ class IncidentReporter:
         )
         updated.labels = [label for label in updated.labels if label not in (READY, FIXING, OBSERVED)]
         updated.labels.append(READY if ready else OBSERVED)
+        if self.on_filed is not None:
+            self.on_filed(incident, updated, ready)
         index[incident.fingerprint] = updated
         self._last_edit[issue.number] = now
         emit("factory.issue_reopened", "factory", issue=issue.number, fingerprint=incident.fingerprint)

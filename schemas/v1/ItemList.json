@@ -1,0 +1,294 @@
+{
+  "$defs": {
+    "ClientKind": {
+      "description": "The caller's trust classification.",
+      "enum": [
+        "owner",
+        "app",
+        "agent",
+        "public"
+      ],
+      "title": "ClientKind",
+      "type": "string"
+    },
+    "InboxItem": {
+      "description": "Garage's durable record of one submission.",
+      "properties": {
+        "context": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "issue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IssueLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind"
+        },
+        "repos": {
+          "items": {
+            "$ref": "#/$defs/RepoRef"
+          },
+          "title": "Repos",
+          "type": "array"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "$ref": "#/$defs/ItemState"
+        },
+        "submit_id": {
+          "title": "Submit Id",
+          "type": "string"
+        },
+        "submitted_by": {
+          "title": "Submitted By",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "trust": {
+          "$ref": "#/$defs/ClientKind"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "submit_id",
+        "submitted_by",
+        "trust",
+        "kind",
+        "text",
+        "state",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "InboxItem",
+      "type": "object"
+    },
+    "IssueLink": {
+      "description": "A filed issue.",
+      "properties": {
+        "number": {
+          "title": "Number",
+          "type": "integer"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "url"
+      ],
+      "title": "IssueLink",
+      "type": "object"
+    },
+    "ItemKind": {
+      "description": "The kind of work submitted.",
+      "enum": [
+        "ask",
+        "incident"
+      ],
+      "title": "ItemKind",
+      "type": "string"
+    },
+    "ItemState": {
+      "description": "Inbox lifecycle states.",
+      "enum": [
+        "new",
+        "needs_repo",
+        "triage",
+        "needs_info",
+        "planning",
+        "awaiting_approval",
+        "approved",
+        "running",
+        "testing",
+        "done",
+        "declined",
+        "cancelled"
+      ],
+      "title": "ItemState",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "RepoRef": {
+      "description": "A repository attached to an item.",
+      "properties": {
+        "full_name": {
+          "title": "Full Name",
+          "type": "string"
+        },
+        "role": {
+          "default": "primary",
+          "enum": [
+            "primary",
+            "also"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "full_name"
+      ],
+      "title": "RepoRef",
+      "type": "object"
+    },
+    "RunLink": {
+      "description": "Dispatch status, without claiming a successful fix.",
+      "properties": {
+        "pr_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pr Url"
+        },
+        "session_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Url"
+        },
+        "state": {
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "RunLink",
+      "type": "object"
+    },
+    "Source": {
+      "description": "Optional caller-supplied provenance.",
+      "properties": {
+        "app_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "App Id"
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channel"
+        },
+        "client": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Client"
+        }
+      },
+      "title": "Source",
+      "type": "object"
+    }
+  },
+  "description": "One page of visible inbox items.",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/InboxItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Cursor"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "ItemList",
+  "type": "object"
+}

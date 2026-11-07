@@ -2,6 +2,10 @@
 
 ## Implemented
 
+- A SQLite inbox, per-client hashed tokens, `/v1/items` submit/list/get/cancel endpoints,
+  and SDK v1 models with committed JSON schemas. CLI clients and items commands read
+  the same database. Legacy submissions and reported incidents also enter the inbox.
+
 - The `garage-sdk` distribution provides scrubbed structured event logging, optional resource stamps, the logging bridge,
   app manifest models, and test-report models. Unstamped events retain the legacy JSONL representation.
 - The Garage service provides manifest/environment configuration, rule-based incident monitoring, GitHub reporting,
@@ -20,5 +24,5 @@
 - There is no hosted CI.
 
 - Multi-app packaging and onboarding beyond the example manifest.
-- Hosted or remote deployment and authentication beyond the loopback bridge's optional bearer token.
+- Hosted or remote deployment; client tokens currently protect only the local inbox API.
 - Additional detector, tracker, and coding-agent integrations.

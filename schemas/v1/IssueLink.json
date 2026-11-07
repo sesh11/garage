@@ -1,0 +1,19 @@
+{
+  "description": "A filed issue.",
+  "properties": {
+    "number": {
+      "title": "Number",
+      "type": "integer"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "number",
+    "url"
+  ],
+  "title": "IssueLink",
+  "type": "object"
+}
