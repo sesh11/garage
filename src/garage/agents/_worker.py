@@ -25,7 +25,10 @@ def main() -> None:
     with (directory / "events.jsonl").open("ab", buffering=0) as stdout:
         with (directory / "stderr.log").open("ab", buffering=0) as stderr:
             try:
-                process = subprocess.Popen(config["command"], cwd=config["worktree"], stdout=stdout, stderr=stderr)
+                env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+                process = subprocess.Popen(
+                    config["command"], cwd=config["worktree"], stdout=stdout, stderr=stderr, env=env
+                )
                 remaining = max(0.01, config["timeout_s"] - (time.time() - config["started_at"]))
                 try:
                     code = process.wait(timeout=remaining)

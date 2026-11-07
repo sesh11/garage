@@ -2,6 +2,7 @@
 
 import sys
 import json
+import shlex
 import asyncio
 import subprocess
 from pathlib import Path
@@ -68,14 +69,21 @@ if mode == 'failed':
     print(json.dumps({'type':'turn.failed', 'error':{'message':'failure'}}), flush=True)
     sys.exit(0)
 if mode == 'nonzero':
+    print('boom: unexpected flag', file=sys.stderr)
     sys.exit(7)
 if mode == 'retry':
     print(json.dumps({'type':'error', 'message':'Stream interrupted; reconnecting'}), flush=True)
 if mode == 'claude_error':
-    print(json.dumps({'type':'result', 'is_error':True}), flush=True)
+    print(json.dumps({'type':'result', 'is_error':True, 'result':'API Error: 401 token expired'}), flush=True)
     sys.exit(0)
 if mode == 'slow':
     time.sleep(0.5)
+if mode == 'artifacts':
+    assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'
+    Path('__pycache__').mkdir()
+    Path('__pycache__/code.cpython-311.pyc').write_bytes(b'cache')
+    Path('.DS_Store').write_bytes(b'finder')
+    Path('notes.txt').write_text('new file\\n')
 Path('code.py').write_text('fixed\\n')
 output = {'summary':'Fixed code', 'pr_url':None, 'test_result':'passed', 'risk':'low'}
 if mode == 'invalid':
@@ -132,7 +140,8 @@ async def test_worktree_result_and_restart(repo: Path, tmp_path: Path, fake_cli:
     config = json.loads((tmp_path / "data" / "runs" / run_id / "run.json").read_text())
     assert config["branch"] == f"garage/{run_id}"
     assert config["agent_session_id"] == ("thread-123" if name == "codex" else "session-123")
-    assert ("codex resume" if name == "codex" else "claude --resume") in config["takeover_command"]
+    flag = "resume" if name == "codex" else "--resume"
+    assert f"{shlex.quote(str(fake_cli))} {flag}" in config["takeover_command"]
     assert await recovered.get_session(run_id) == state
 
 
@@ -147,6 +156,8 @@ async def test_failed_results(
     assert state.status == "failed"
     assert state.structured_output is None
     assert git(repo, "status", "--porcelain") == ""
+    if mode == "nonzero":
+        assert "stderr: boom: unexpected flag" in (state.status_detail or "")
 
 
 async def test_codex_nonfatal_error(
@@ -165,7 +176,21 @@ async def test_claude_result_error(
 ) -> None:
     monkeypatch.setenv("FAKE_MODE", "claude_error")
     runner = agent(repo, tmp_path, fake_cli, "claude-code")
-    assert (await finish(runner, await start(runner))).status == "failed"
+    state = await finish(runner, await start(runner))
+    assert state.status == "failed"
+    assert "API Error: 401 token expired" in (state.status_detail or "")
+
+
+async def test_build_leftovers_not_committed(
+    repo: Path, tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MODE", "artifacts")
+    runner = agent(repo, tmp_path, fake_cli)
+    run_id = await start(runner)
+    assert (await finish(runner, run_id)).status == "finished"
+    committed = git(tmp_path / "data" / "worktrees" / run_id, "ls-files").splitlines()
+    assert "notes.txt" in committed
+    assert not [name for name in committed if "__pycache__" in name or name.endswith((".pyc", ".DS_Store"))]
 
 
 async def test_timeout_enforced_without_polling(
@@ -333,7 +358,7 @@ def test_direct_handoff_without_manifest(
     output = capsys.readouterr().out
     assert "Status: finished" in output
     assert (tmp_path / "direct" / "runs").as_uri() in output
-    assert "codex resume thread-123" in output
+    assert f"{shlex.quote(str(fake_cli))} resume thread-123" in output
     assert '"test_result": "passed"' in output
 
 

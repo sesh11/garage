@@ -18,8 +18,14 @@ from collections.abc import Iterator, AsyncIterator
 
 from pydantic import BaseModel, ConfigDict
 
+from garage_sdk import scrub_text
 from garage.github import GitHubIssues
 from garage.agents.base import SessionState, SessionStatus, CreatedSession
+
+
+BUILD_LEFTOVERS = frozenset(
+    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "node_modules", ".DS_Store"}
+)
 
 
 class LocalCapacityError(RuntimeError):
@@ -46,6 +52,22 @@ def _git(path: Path, *args: str, env: dict[str, str] | None = None) -> str:
 def _identity(pid: int) -> str:
     result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True)
     return result.stdout.strip()
+
+
+def _publishable(name: str) -> bool:
+    parts = Path(name).parts
+    if any(part.startswith(".env") or part in ("credentials", "auth.json") for part in parts):
+        return False
+    return not name.endswith(".pyc") and not BUILD_LEFTOVERS.intersection(parts)
+
+
+def _stderr_tail(directory: Path, limit: int = 500) -> str:
+    try:
+        text = (directory / "stderr.log").read_text(errors="replace")
+    except OSError:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return scrub_text(" | ".join(lines[-3:]))[-limit:]
 
 
 def _alive(config: dict[str, object]) -> bool:
@@ -241,6 +263,8 @@ class LocalAgent:
                     errors.append(message if isinstance(message, str) else json.dumps(message))
             if event.get("type") == "result":
                 failed |= event.get("is_error") is True
+                if event.get("is_error") is True and isinstance(event.get("result"), str):
+                    errors.append(event["result"])
                 output = event.get("structured_output")
         return own_id, failed, output, "; ".join(errors)
 
@@ -253,7 +277,8 @@ class LocalAgent:
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
                 try:
                     os.killpg(config["pid"], sig)
-                except ProcessLookupError:
+                except (ProcessLookupError, PermissionError):
+                    # macOS reports EPERM once the group has only a zombie left.
                     break
                 await asyncio.sleep(float(config["grace_s"]))
 
@@ -264,14 +289,14 @@ class LocalAgent:
         own_id, failed, output, error_detail = self._events(directory)
         takeover = ""
         if own_id:
-            executable = "codex" if config["agent"] == "codex" else "claude"
-            flag = "resume" if executable == "codex" else "--resume"
+            executable = shlex.quote(str(config["command"][0]))
+            flag = "resume" if config["agent"] == "codex" else "--resume"
             takeover = f"cd {shlex.quote(config['worktree'])} && {executable} {flag} {shlex.quote(own_id)}"
         config["takeover_command"] = takeover
         config["agent_session_id"] = own_id
         detail = f"branch: {config['branch']}; takeover: {takeover or 'pending CLI session id'}"
         if error_detail:
-            detail += f"; CLI notices: {error_detail}"
+            detail += f"; CLI notices: {scrub_text(error_detail)}"
         state = SessionState(session_id=session_id, status="working", status_detail=detail)
         if (directory / "expired").exists():
             state.status = "expired"
@@ -284,6 +309,9 @@ class LocalAgent:
                 state.status = "expired"
         elif failed or not (directory / "exit_code").exists() or (directory / "exit_code").read_text() != "0":
             state.status = "failed"
+            stderr = _stderr_tail(directory)
+            if stderr:
+                state.status_detail = f"{detail}; stderr: {stderr}"
         else:
             try:
                 if config["agent"] == "codex":
@@ -325,9 +353,7 @@ class LocalAgent:
             raise ValueError("agent changed the run branch; refusing to publish")
         _git(worktree, "add", "--update")
         for name in _git(worktree, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
-            if name and not any(
-                part.startswith(".env") or part in ("credentials", "auth.json") for part in Path(name).parts
-            ):
+            if name and _publishable(name):
                 _git(worktree, "add", "--", name)
         if _git(worktree, "diff", "--cached", "--name-only"):
             _git(worktree, "commit", "-m", str(config["title"]))
