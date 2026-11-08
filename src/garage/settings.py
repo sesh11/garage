@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from dataclasses import dataclass
 
+from garage_sdk.api import normalize_repo
 from garage_sdk.manifest import Manifest, load_manifest
 from garage.incidents.base import parse_duration
 
@@ -42,6 +43,13 @@ class GarageSettings:
     local_model: str | None = None
     claude_allowed_tools: str = "Read,Edit,Write,Bash,Glob,Grep"
     local_repo_path: Path | None = None
+    project: str = ""
+    ledger_path: Path | None = None
+
+    @property
+    def dispatch_ledger(self) -> Path:
+        """Where this project's dispatch ledger lives."""
+        return self.ledger_path or self.data_dir / "dispatch.json"
 
 
 def _duration_env(name: str, default: str) -> float:
@@ -88,9 +96,16 @@ def settings_from_env(manifest_path: Path | None = None) -> GarageSettings:
     selected_manifest = manifest_path or Path(os.getenv("GARAGE_MANIFEST") or "./garage.toml")
     selected_manifest = selected_manifest.expanduser().resolve()
     manifest = load_manifest(selected_manifest)
-    manifest_dir = selected_manifest.parent
+    return settings_for_manifest(manifest, selected_manifest.parent)
 
-    events_value = os.getenv("GARAGE_EVENTS_DIR") or manifest.signals.path
+
+def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_overrides: bool = True) -> GarageSettings:
+    """Combine one manifest with GARAGE environment variables.
+
+    ``project_overrides`` applies the per-project variables (``GARAGE_REPO``, ``GARAGE_EVENTS_DIR`` and
+    ``GARAGE_LOCAL_REPO_PATH``); a projects file turns them off because they cannot name a project.
+    """
+    events_value = (os.getenv("GARAGE_EVENTS_DIR") if project_overrides else None) or manifest.signals.path
     if events_value is None:
         events_dir = None
     else:
@@ -104,7 +119,7 @@ def settings_from_env(manifest_path: Path | None = None) -> GarageSettings:
     return GarageSettings(
         manifest=manifest,
         manifest_dir=manifest_dir,
-        repo=os.getenv("GARAGE_REPO") or manifest.app.repo,
+        repo=normalize_repo((os.getenv("GARAGE_REPO") if project_overrides else None) or manifest.app.repo),
         events_dir=events_dir,
         retention_days=manifest.signals.retention_days,
         rules_path=rules_path,
@@ -131,5 +146,8 @@ def settings_from_env(manifest_path: Path | None = None) -> GarageSettings:
         claude_path=os.getenv("GARAGE_CLAUDE_PATH", "claude"),
         local_model=os.getenv("GARAGE_LOCAL_MODEL") or None,
         claude_allowed_tools=os.getenv("GARAGE_CLAUDE_ALLOWED_TOOLS", "Read,Edit,Write,Bash,Glob,Grep"),
-        local_repo_path=_manifest_relative_path(os.getenv("GARAGE_LOCAL_REPO_PATH"), manifest_dir),
+        local_repo_path=_manifest_relative_path(
+            os.getenv("GARAGE_LOCAL_REPO_PATH") if project_overrides else None, manifest_dir
+        ),
+        project=manifest.app.id,
     )

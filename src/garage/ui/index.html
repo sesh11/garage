@@ -26,6 +26,8 @@
     pre { font: 12px ui-monospace, monospace; overflow-x: auto; white-space: pre-wrap; }
     a { color: #4796e8; }
     .empty { color: #888; padding: 24px; text-align: center; }
+    h2 { font-size: .9rem; font-weight: 600; margin: 28px 0 0; }
+    label { margin-left: 10px; }
     @media (max-width: 700px) {
       body { padding: 14px; }
       th:nth-child(1) { width: 20%; } th:nth-child(2) { width: auto; }
@@ -40,6 +42,12 @@
       <h1>garage</h1>
       <div id="health" class="meta">Connecting…</div>
     </div>
+    <div>
+    <label id="project-picker" hidden>Project
+      <select id="project">
+        <option value="">All projects</option>
+      </select>
+    </label>
     <label>Window
       <select id="incident-window">
         <option value="1h">Last hour</option>
@@ -47,11 +55,17 @@
         <option value="7d">Last 7 days</option>
       </select>
     </label>
+    </div>
   </header>
   <div id="incident-meta" class="meta"></div>
   <table>
     <thead><tr><th>Severity</th><th>Incident</th><th>Count</th><th>Last seen</th><th>Status</th></tr></thead>
     <tbody id="incidents"></tbody>
+  </table>
+  <h2 class="meta">Inbox</h2>
+  <table>
+    <thead><tr><th>State</th><th>Item</th><th>Project</th><th>From</th><th>Issue</th></tr></thead>
+    <tbody id="items"></tbody>
   </table>
   <script>
     const openIncidents = new Set();
@@ -82,7 +96,8 @@
       severity.className = "sev " + incident.severity;
       severity.textContent = incident.severity;
       row.querySelector(".title").textContent = incident.title;
-      row.querySelector(".rule").textContent = incident.fingerprint;
+      row.querySelector(".rule").textContent =
+        (incident.project ? incident.project + " · " : "") + incident.fingerprint;
       row.querySelector("summary").textContent = "Evidence (" + incident.samples.length + " latest events)";
       row.querySelector(".samples").textContent =
         incident.samples.slice().reverse().map(sampleText).join("\n");
@@ -132,15 +147,73 @@
         body.appendChild(row);
       }
     }
+    function renderItems(items) {
+      const body = document.getElementById("items");
+      body.replaceChildren();
+      items.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = '<td><span class="pill"></span></td><td></td><td></td><td></td><td></td>';
+        const cells = row.querySelectorAll("td");
+        cells[0].firstChild.textContent = item.state;
+        cells[1].textContent = item.text;
+        cells[2].textContent = item.project || "(no project)";
+        cells[3].textContent = item.submitted_by;
+        if (item.issue) {
+          const link = document.createElement("a");
+          link.href = item.issue.url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = "#" + item.issue.number;
+          cells[4].appendChild(link);
+        }
+        body.appendChild(row);
+      });
+      if (!items.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = '<td colspan="5" class="empty">No inbox items.</td>';
+        body.appendChild(row);
+      }
+    }
+    const projectSelect = document.getElementById("project");
+    async function loadProjects() {
+      const projects = (await (await fetch("/api/projects")).json()).projects;
+      const wanted = new URLSearchParams(location.search).get("project") || "";
+      projects.forEach(project => {
+        const option = document.createElement("option");
+        option.value = project.name;
+        option.textContent = project.name + " (" + project.repos.map(repo => repo.full_name).join(", ") + ")";
+        projectSelect.appendChild(option);
+      });
+      const unassigned = document.createElement("option");
+      unassigned.value = "_unassigned";
+      unassigned.textContent = "No project";
+      projectSelect.appendChild(unassigned);
+      if (Array.from(projectSelect.options).some(option => option.value === wanted)) projectSelect.value = wanted;
+      document.getElementById("project-picker").hidden = projects.length < 2;
+    }
     async function refresh() {
       const health = await (await fetch("/api/health")).json();
+      const project = projectSelect.value;
       document.getElementById("health").textContent =
+        (health.projects.length ? health.projects.join(", ") + " · " : "") +
         (health.detector || "No detector") + (health.reporting ? " · reporting enabled" : " · reporting disabled");
       const since = document.getElementById("incident-window").value;
-      renderIncidents(await (await fetch("/api/incidents?since=" + encodeURIComponent(since))).json());
+      const incidentQuery = "?since=" + encodeURIComponent(since) +
+        (project && project !== "_unassigned" ? "&project=" + encodeURIComponent(project) : "");
+      renderIncidents(project === "_unassigned" ? {incidents: [], detector: null} :
+        await (await fetch("/api/incidents" + incidentQuery)).json());
+      const items = await fetch("/api/items" + (project ? "?project=" + encodeURIComponent(project) : ""));
+      renderItems(items.ok ? (await items.json()).items : []);
     }
+    projectSelect.addEventListener("change", () => {
+      const url = new URL(location.href);
+      if (projectSelect.value) url.searchParams.set("project", projectSelect.value);
+      else url.searchParams.delete("project");
+      history.replaceState(null, "", url);
+      refresh();
+    });
     document.getElementById("incident-window").addEventListener("change", refresh);
-    refresh();
+    loadProjects().then(refresh);
     setInterval(refresh, 2000);
   </script>
 </body>

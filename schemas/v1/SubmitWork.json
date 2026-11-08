@@ -88,6 +88,18 @@
       "$ref": "#/$defs/ItemKind",
       "default": "ask"
     },
+    "project": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Project"
+    },
     "repo": {
       "anyOf": [
         {

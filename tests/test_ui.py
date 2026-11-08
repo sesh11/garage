@@ -40,7 +40,7 @@ def test_incidents_ui_routes_and_redirect(tmp_path) -> None:
         assert page.status_code == 200
         assert "garage" in page.text
         assert "Job board" not in page.text and "Cost tracking" not in page.text
-        assert client.get("/api/health").json() == {"ok": True, "detector": "stub", "reporting": False}
+        assert client.get("/api/health").json() == {"ok": True, "detector": "stub", "reporting": False, "projects": []}
         events = client.get("/api/events")
         assert events.status_code == 200
         assert events.json()["count"] == 1
