@@ -258,7 +258,8 @@ class IssueWatcher:
         """Poll forever; a failed poll is logged and retried on the next tick."""
         while True:
             try:
-                await self.poll_once()
+                for action in await self.poll_once():
+                    logger.info("intake %s: %s", self.tracker.repo, action)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
