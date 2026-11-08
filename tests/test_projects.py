@@ -221,7 +221,7 @@ async def test_two_projects_file_tag_and_filter_items(tmp_path) -> None:
         assert (garage["project"], garage["repos"][0]["full_name"], garage["state"]) == (
             "garage",
             "sesh11/garage",
-            "approved",
+            "awaiting_approval",
         )
         by_repo = (
             await client.post("/v1/items", json={"id": "a1", "text": "Fix mic", "repo": "sesh11/ambient-home"})
@@ -246,7 +246,7 @@ async def test_two_projects_file_tag_and_filter_items(tmp_path) -> None:
         assert (await client.get("/v1/items", params={"project": "Bad Name"})).status_code == 422
 
         moved = (await client.post(f"/v1/items/{waiting['id']}/project", json={"project": "garage"})).json()
-        assert (moved["project"], moved["state"], moved["issue"]["number"]) == ("garage", "approved", 2)
+        assert (moved["project"], moved["state"], moved["issue"]["number"]) == ("garage", "awaiting_approval", 2)
         assert len(trackers["garage"].creates) == 2
 
         detail = (await client.get(f"/v1/items/{by_repo['id']}")).json()

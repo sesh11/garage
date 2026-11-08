@@ -5,6 +5,7 @@ import sys
 import json
 import asyncio
 import logging
+import secrets
 import argparse
 import ipaddress
 from typing import Literal, cast
@@ -22,6 +23,14 @@ from garage.github import GitHubIssues
 from garage.report import READY, DEFAULT_ATTRIBUTION, DEFAULT_REQUEST_ATTRIBUTION, RequestLogger, IncidentReporter
 from garage.tracker import Tracker, IssueRecord
 from garage_sdk.api import ItemKind, IssueLink, ItemState, ClientKind, SubmitWork, json_schemas
+from garage.approval import (
+    Approvals,
+    IssueWatcher,
+    ApprovalError,
+    ApprovalTarget,
+    dispatch_hold,
+    initial_state,
+)
 from garage.dispatch import OUTPUT_SCHEMA, Dispatcher, build_fix_prompt
 from garage.projects import only, project_info, select_projects
 from garage.requests import Request, BridgeProject, RequestBridge
@@ -54,7 +63,13 @@ class _OfflineTracker:
         raise RuntimeError("offline tracker cannot create issues")
 
     async def update_issue(
-        self, number: int, *, title: str | None = None, body: str | None = None, state: str | None = None
+        self,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        state_reason: str | None = None,
     ) -> IssueRecord:
         raise RuntimeError("offline tracker cannot update issues")
 
@@ -82,12 +97,18 @@ def build_reporters(settings: GarageSettings) -> tuple[IncidentReporter | None, 
             issues,
             max_new_per_day=cap,
             attribution=settings.manifest.report.attribution or DEFAULT_ATTRIBUTION,
+            needs_approval=settings.needs_approval,
         ),
-        RequestLogger(
-            issues,
-            max_per_day=cap,
-            attribution=settings.manifest.report.request_attribution or DEFAULT_REQUEST_ATTRIBUTION,
-        ),
+        _request_logger(settings, issues),
+    )
+
+
+def _request_logger(settings: GarageSettings, issues: Tracker) -> RequestLogger:
+    return RequestLogger(
+        issues,
+        max_per_day=settings.max_new_issues_per_day,
+        attribution=settings.manifest.report.request_attribution or DEFAULT_REQUEST_ATTRIBUTION,
+        needs_approval=settings.needs_approval,
     )
 
 
@@ -149,6 +170,7 @@ def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False, offline
         dry_run=dry_run,
         legacy_ledger_path=_legacy_ledger_path(settings),
         project=settings.project or None,
+        hold=None if offline else dispatch_hold(Store(settings.data_dir / "garage.db"), settings.repo),
     )
 
 
@@ -183,7 +205,7 @@ def _incident_sink(settings: GarageSettings) -> Callable[[Incident, IssueRecord,
         work = SubmitWork(id=incident.fingerprint, kind=ItemKind.incident, text=incident.title, repo=settings.repo)
         item, _ = store.submit("garage-monitor", ClientKind.agent, work, work.repo, settings.project or None)
         item.issue = IssueLink(number=issue.number, url=issue.url)
-        item.state = ItemState.approved if ready else ItemState.new
+        item.state = initial_state(issue.labels, settings.needs_approval)
         store.save(item, "garage-monitor", "file_success")
 
     return record
@@ -202,6 +224,7 @@ async def _report(settings: GarageSettings, since: str, dry_run: bool, offline: 
         dry_run=dry_run,
         attribution=settings.manifest.report.attribution or DEFAULT_ATTRIBUTION,
         on_filed=_incident_sink(settings) if not dry_run else None,
+        needs_approval=settings.needs_approval,
     )
     print(f"{len(incidents)} incident(s) in the last {since} from {event_log.directory}")
     return await reporter.sync(incidents)
@@ -249,6 +272,8 @@ def _serve(
     monitors: list[tuple[GarageSettings, IncidentMonitor, EventLog]] = []
     reporters: list[IncidentReporter] = []
     dispatchers: list[Dispatcher] = []
+    watchers: list[IssueWatcher] = []
+    targets: list[ApprovalTarget] = []
     bridge_projects: list[BridgeProject] = []
     ui_projects: list[UiProject] = []
     for settings in projects:
@@ -271,6 +296,21 @@ def _serve(
         dispatcher = build_dispatcher(settings)
         if dispatcher is not None:
             dispatchers.append(dispatcher)
+        wake = dispatcher.poke if dispatcher is not None else None
+        targets.append(
+            ApprovalTarget(
+                settings.project or None,
+                settings.repo,
+                GitHubIssues(settings.repo, settings.github_token) if settings.github_token else None,
+                on_approved=wake,
+            )
+        )
+        if settings.intake:
+            watcher = build_watcher(settings, store, on_approved=wake)
+            if watcher is None:
+                logger.warning("GARAGE_INTAKE is on but GARAGE_GITHUB_TOKEN is not set; not watching new issues.")
+            else:
+                watchers.append(watcher)
         bridge_projects.append(
             BridgeProject(
                 settings.project or None,
@@ -282,7 +322,7 @@ def _serve(
         )
         ui_projects.append(UiProject(settings.project or None, source, detector, reporter, project_info(settings)))
     bridge = RequestBridge(bridge_token=shared.bridge_token, projects=bridge_projects)
-    app = create_app(bridge=bridge, store=store, projects=ui_projects)
+    app = create_app(bridge=bridge, store=store, projects=ui_projects, approvals=Approvals(store, targets))
     app.state.monitor = monitors[0][1] if monitors else None
     app.state.monitors = [monitor for _, monitor, _ in monitors]
 
@@ -305,6 +345,8 @@ def _serve(
             tasks.append(asyncio.create_task(reporter.run()))
         for dispatcher in dispatchers:
             tasks.append(asyncio.create_task(dispatcher.run()))
+        for watcher in watchers:
+            tasks.append(asyncio.create_task(watcher.run()))
 
     async def stop_background() -> None:
         for task in tasks:
@@ -440,10 +482,100 @@ async def _assign(settings: GarageSettings, item_id: str) -> int:
     )
     if issue is not None:
         item.issue = IssueLink(number=issue.number, url=issue.url)
-        item.state = ItemState.approved
+        item.state = initial_state(issue.labels, settings.needs_approval)
         store.save(item, "cli", "file_success")
-        print(f"Filed {issue.url}")
+        print(f"Filed {issue.url} ({item.state})")
     return 0
+
+
+def build_approvals(projects: Sequence[GarageSettings], store: Store) -> Approvals:
+    """Approve and decline across every project; GitHub writes need GARAGE_GITHUB_TOKEN."""
+    return Approvals(
+        store,
+        [
+            ApprovalTarget(
+                project.project or None,
+                project.repo,
+                GitHubIssues(project.repo, project.github_token) if project.github_token else None,
+            )
+            for project in projects
+        ],
+    )
+
+
+def build_watcher(
+    settings: GarageSettings,
+    store: Store,
+    *,
+    dry_run: bool = False,
+    rescan_s: float | None = None,
+    on_approved: Callable[[], None] | None = None,
+) -> IssueWatcher | None:
+    """Watch one project's repository for new issues; needs GARAGE_GITHUB_TOKEN."""
+    if not settings.github_token:
+        return None
+    return IssueWatcher(
+        store,
+        GitHubIssues(settings.repo, settings.github_token),
+        settings.intake_cursor,
+        project=settings.project or None,
+        needs_approval=settings.needs_approval,
+        interval_s=settings.intake_interval_s,
+        dry_run=dry_run,
+        rescan_s=rescan_s,
+        on_approved=on_approved,
+    )
+
+
+async def _ask(settings: GarageSettings, text: str) -> int:
+    store = Store(settings.data_dir / "garage.db")
+    work = SubmitWork(
+        id="ask-" + secrets.token_hex(6), text=text, repo=settings.repo, project=settings.project or None
+    )
+    item, _ = store.submit("cli", ClientKind.owner, work, settings.repo, settings.project or None)
+    print(f"{item.id} saved for project {settings.project} ({settings.repo})")
+    if not settings.github_token:
+        print("GARAGE_GITHUB_TOKEN is not set, so no GitHub issue was filed; it stays in the inbox as new.")
+        return 0
+    issue = await _request_logger(settings, GitHubIssues(settings.repo, settings.github_token)).file(
+        Request(
+            id=item.id, request=text, created_at=item.created_at, repository=settings.repo, project=settings.project
+        )
+    )
+    if issue is None:
+        print("Not filed: the daily new-issue cap was reached.", file=sys.stderr)
+        return 1
+    item.issue = IssueLink(number=issue.number, url=issue.url)
+    item.state = initial_state(issue.labels, settings.needs_approval)
+    store.save(item, "cli", "file_success")
+    print(f"Filed {issue.url} ({item.state})")
+    if item.state == ItemState.awaiting_approval:
+        print(f"Approve: garage approve {item.id}   Decline: garage decline {item.id}")
+    return 0
+
+
+async def _decide(projects: Sequence[GarageSettings], ref: str, project: str | None, approve: bool) -> int:
+    store = Store(projects[0].data_dir / "garage.db")
+    approvals = build_approvals(projects, store)
+    try:
+        item = approvals.find(ref, project)
+        item = await (approvals.approve if approve else approvals.decline)(item, "cli", "terminal")
+    except ApprovalError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    where = f" ({item.issue.url})" if item.issue else ""
+    print(f"{item.id} is now {item.state}{where}")
+    return 0
+
+
+async def _intake(settings: GarageSettings, dry_run: bool, since: str | None) -> list[str]:
+    store = Store(settings.data_dir / "garage.db")
+    watcher = build_watcher(
+        settings, store, dry_run=dry_run, rescan_s=parse_duration(since).total_seconds() if since else None
+    )
+    if watcher is None:
+        raise ValueError("GARAGE_GITHUB_TOKEN is not set; intake reads the project's GitHub issues")
+    return await watcher.poll_once()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -490,7 +622,27 @@ def main(argv: list[str] | None = None) -> int:
     report_parser.add_argument("--offline", action="store_true", help="preview without checking existing issues")
     report_parser.add_argument("--since", default="24h", help="lookback such as 6h or 7d")
 
-    dispatch_parser = subparsers.add_parser("dispatch", help="dispatch ready issues once")
+    intake_parser = subparsers.add_parser("intake", help="take in new GitHub issues once, as proposed")
+    intake_parser.add_argument("--manifest", type=Path)
+    intake_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+    intake_parser.add_argument("--project", help="only this project")
+    intake_parser.add_argument("--dry-run", action="store_true", help="print actions without changing anything")
+    intake_parser.add_argument("--since", help="also look at issues opened this far back, such as 1h or 2d")
+    intake_parser.set_defaults(offline=False)
+
+    ask_parser = subparsers.add_parser("ask", help="file a request as a proposed GitHub issue")
+    ask_parser.add_argument("--manifest", type=Path)
+    ask_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+    ask_parser.add_argument("--project", help="the project to ask (optional with one project)")
+    ask_parser.add_argument("text")
+    for name, verb in (("approve", "approve"), ("decline", "decline")):
+        decide = subparsers.add_parser(name, help=f"{verb} a proposed item (GitHub issue and inbox)")
+        decide.add_argument("--manifest", type=Path)
+        decide.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+        decide.add_argument("--project", help="the project, when an issue number is ambiguous")
+        decide.add_argument("id", help="inbox item id (item_...), issue number, or issue URL")
+
+    dispatch_parser = subparsers.add_parser("dispatch", help="dispatch approved (ready) issues once")
     dispatch_parser.add_argument("--manifest", type=Path)
     dispatch_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
     dispatch_parser.add_argument("--project", help="only this project")
@@ -559,7 +711,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "assign":
             return asyncio.run(_assign(only(projects, args.project)[0], args.item_id))
-        if args.command in ("report", "dispatch"):
+        if args.command == "ask":
+            chosen = only(projects, args.project)
+            if len(chosen) != 1:
+                print("several projects: name one with --project", file=sys.stderr)
+                return 2
+            return asyncio.run(_ask(chosen[0], args.text))
+        if args.command in ("approve", "decline"):
+            if args.project:
+                only(projects, args.project)
+            return asyncio.run(_decide(projects, args.id, args.project, args.command == "approve"))
+        if args.command in ("report", "dispatch", "intake"):
             chosen = only(projects, args.project)
             dry_run = args.dry_run or args.offline
             if args.command == "report" and not dry_run and not settings.github_token:
@@ -571,7 +733,10 @@ def main(argv: list[str] | None = None) -> int:
             for project in chosen:
                 if len(chosen) > 1:
                     print(f"== project {project.project} ({project.repo}) ==")
-                if args.command == "report":
+                if args.command == "intake":
+                    actions = asyncio.run(_intake(project, dry_run, args.since))
+                    empty = f"{prefix}nothing new in {project.repo}"
+                elif args.command == "report":
                     if project.events_dir is None and from_file:
                         print(f"{prefix}no [signals].path for {project.project}; skipped")
                         continue

@@ -166,6 +166,17 @@ class Store:
             row = db.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
             return self._item(row) if row else None
 
+    def by_issue(self, repo: str, number: int) -> InboxItem | None:
+        """Find the item linked to one GitHub issue (``owner/name`` and number)."""
+        suffix = f"github.com/{normalize_repo(repo)}/issues/{number}"
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM items WHERE issue_number=? ORDER BY created_at", (number,)).fetchall()
+        for row in rows:
+            item = self._item(row)
+            if item.issue is not None and item.issue.url.lower().endswith(suffix):
+                return item
+        return None
+
     def items(self, state: ItemState | None = None, project: str | None = None) -> list[InboxItem]:
         """Read newest-first inbox records, optionally for one project (``UNASSIGNED`` for none)."""
         with self.connection() as db:

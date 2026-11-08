@@ -45,6 +45,18 @@ class GarageSettings:
     local_repo_path: Path | None = None
     project: str = ""
     ledger_path: Path | None = None
+    intake: bool = False
+    intake_interval_s: float = 60
+
+    @property
+    def needs_approval(self) -> bool:
+        """Whether new work waits for the owner (``"triage"`` in ``[policy].needs_approval``, the default)."""
+        return "triage" in self.manifest.policy.needs_approval
+
+    @property
+    def intake_cursor(self) -> Path:
+        """Where this project's new-issue watcher remembers how far it has read, next to the dispatch ledger."""
+        return self.dispatch_ledger.parent / "intake.json"
 
     @property
     def dispatch_ledger(self) -> Path:
@@ -150,4 +162,6 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
             os.getenv("GARAGE_LOCAL_REPO_PATH") if project_overrides else None, manifest_dir
         ),
         project=manifest.app.id,
+        intake=_bool_env("GARAGE_INTAKE", False),
+        intake_interval_s=_duration_env("GARAGE_INTAKE_INTERVAL", "60s"),
     )

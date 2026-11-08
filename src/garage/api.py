@@ -23,6 +23,7 @@ from garage_sdk.api import (
     AssignProject,
     normalize_project,
 )
+from garage.approval import initial_state
 from garage.requests import Request as GarageRequest
 from garage.requests import RequestBridge
 
@@ -103,7 +104,7 @@ def router(
             return JSONResponse({"error": "issue tracker request failed"}, status_code=502)
         if issue is not None and store is not None:
             item.issue = IssueLink(number=issue.number, url=issue.url)
-            item.state = ItemState.approved
+            item.state = initial_state(issue.labels, needs_approval=True)
             store.save(item, name, "file_success")
         return None
 

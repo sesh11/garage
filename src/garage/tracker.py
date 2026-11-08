@@ -21,6 +21,10 @@ class IssueRecord(BaseModel):
     labels: list[str]
     created_at: datetime
     closed_at: datetime | None = None
+    updated_at: datetime | None = None
+    state_reason: str | None = None
+    author: str | None = None
+    pull_request: bool = False
 
     def marker(self, key: str) -> str | None:
         """Return the value of a hidden ``<!-- factory-key: value -->`` marker in the body."""
@@ -54,8 +58,9 @@ class Tracker(Protocol):
         title: str | None = None,
         body: str | None = None,
         state: str | None = None,
+        state_reason: str | None = None,
     ) -> IssueRecord:
-        """Update an issue."""
+        """Update an issue; ``state_reason`` (``completed`` or ``not_planned``) applies when closing."""
         ...
 
     async def add_labels(self, number: int, labels: list[str]) -> None:
@@ -68,4 +73,14 @@ class Tracker(Protocol):
 
     async def comment(self, number: int, body: str) -> None:
         """Post an issue comment."""
+        ...
+
+
+class IssueFeed(Tracker, Protocol):
+    """A tracker that can also list every issue changed since a moment, for watching new issues."""
+
+    async def changed_since(
+        self, since: datetime, etag: str | None = None
+    ) -> tuple[list[IssueRecord], str | None, bool]:
+        """Return issues and pull requests updated at or after ``since``, the new ETag, and not-modified."""
         ...

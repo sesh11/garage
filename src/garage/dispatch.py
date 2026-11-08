@@ -189,9 +189,11 @@ class Dispatcher:
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         legacy_ledger_path: Path | None = None,
         project: str | None = None,
+        hold: Callable[[IssueRecord], str | None] | None = None,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
         self.project = project
+        self.hold = hold
         self.tracker = tracker
         self.agent = agent
         self.ledger_path = ledger_path
@@ -272,6 +274,9 @@ class Dispatcher:
                 return f"label #{issue.number} (session already started: {record.session_url})"
             await self._label(ledger, record)
             return f"label #{issue.number} (session already started: {record.session_url})"
+        reason = self.hold(issue) if self.hold is not None else None
+        if reason is not None:
+            return f"hold #{issue.number}: {reason}"
         if self.dry_run:
             return f"start session for #{issue.number}: {issue.title}"
         return await self._dispatch(ledger, issue)

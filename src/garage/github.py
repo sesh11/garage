@@ -1,6 +1,7 @@
 """Minimal GitHub Issues client for Garage."""
 
 import re
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import httpx
@@ -28,6 +29,10 @@ def _record(payload: dict[str, object]) -> IssueRecord:
             "labels": labels,
             "created_at": payload["created_at"],
             "closed_at": payload.get("closed_at"),
+            "updated_at": payload.get("updated_at"),
+            "state_reason": payload.get("state_reason"),
+            "author": user.get("login") if isinstance(user := payload.get("user"), dict) else None,
+            "pull_request": "pull_request" in payload,
         }
     )
 
@@ -57,15 +62,19 @@ class GitHubIssues:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    async def _request(self, method: str, url: str, json: object | None = None) -> httpx.Response:
+    async def _request(
+        self, method: str, url: str, json: object | None = None, headers: dict[str, str] | None = None
+    ) -> httpx.Response:
         if not url.startswith("http"):
             url = f"{self.base_url}{url}"
+        merged = {**self._headers(), **(headers or {})}
         if self._http is not None:
-            response = await self._http.request(method, url, json=json, headers=self._headers())
+            response = await self._http.request(method, url, json=json, headers=merged)
         else:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                response = await client.request(method, url, json=json, headers=self._headers())
-        response.raise_for_status()
+                response = await client.request(method, url, json=json, headers=merged)
+        if response.status_code != 304:
+            response.raise_for_status()
         return response
 
     @property
@@ -86,6 +95,33 @@ class GitHubIssues:
             match = _NEXT.search(response.headers.get("link", ""))
             url = match.group(1) if match else None
         return found
+
+    async def changed_since(
+        self, since: datetime, etag: str | None = None
+    ) -> tuple[list[IssueRecord], str | None, bool]:
+        """List issues and PRs updated at or after ``since``, oldest change first.
+
+        Sends ``If-None-Match`` with the previous ETag; GitHub answers an unchanged list with 304, which does not
+        count against the rate limit. Returns (records, etag, not_modified).
+        """
+        stamp = since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        url: str | None = f"{self._repo_path}/issues?state=all&sort=updated&direction=asc&since={stamp}&per_page=100"
+        found: list[IssueRecord] = []
+        first = True
+        new_etag: str | None = None
+        while url:
+            response = await self._request("GET", url, headers={"If-None-Match": etag} if first and etag else None)
+            if first:
+                if response.status_code == 304:
+                    return [], etag, True
+                new_etag = response.headers.get("etag")
+                first = False
+            payload = response.json()
+            if isinstance(payload, list):
+                found.extend(_record(item) for item in payload if isinstance(item, dict))
+            match = _NEXT.search(response.headers.get("link", ""))
+            url = match.group(1) if match else None
+        return found, new_etag, False
 
     async def ensure_labels(self, labels: dict[str, tuple[str, str]]) -> None:
         """Create any missing labels; ``labels`` maps name to (color, description)."""
@@ -116,8 +152,9 @@ class GitHubIssues:
         title: str | None = None,
         body: str | None = None,
         state: str | None = None,
+        state_reason: str | None = None,
     ) -> IssueRecord:
-        """Edit an issue's title, body, or state."""
+        """Edit an issue's title, body, or state (with an optional close reason)."""
         payload: dict[str, object] = {}
         if title is not None:
             payload["title"] = title
@@ -125,6 +162,8 @@ class GitHubIssues:
             payload["body"] = body
         if state is not None:
             payload["state"] = state
+        if state_reason is not None:
+            payload["state_reason"] = state_reason
         response = await self._request("PATCH", f"{self._repo_path}/issues/{number}", payload)
         return _record(response.json())
 
