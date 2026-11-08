@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 import uvicorn
 from dotenv import load_dotenv
 
+from garage import service
 from garage.ui import create_app
 from garage_sdk import configure
 from garage.store import Store
@@ -231,18 +232,25 @@ def _loopback_host(host: str) -> bool:
 
 def _serve(settings: GarageSettings, host: str, port: int) -> int:
     store = Store(settings.data_dir / "garage.db")
-    source = _event_log(settings)
     sink = EventLog(settings.data_dir / "events")
     configure(sink)
-    detector = build_detector(settings.detector, settings.rules_path)
-    monitor = IncidentMonitor(
-        detector,
-        source,
-        sink=sink,
-        lookback=timedelta(seconds=settings.lookback_s),
-    )
     reporter, request_logger = build_reporters(settings)
-    if reporter is not None:
+    source: EventLog | None = None
+    detector: Detector | None = None
+    monitor: IncidentMonitor | None = None
+    if settings.events_dir is None:
+        logger.info("No [signals].path or GARAGE_EVENTS_DIR; incident detection is off.")
+        reporter = None
+    else:
+        source = _event_log(settings)
+        detector = build_detector(settings.detector, settings.rules_path)
+        monitor = IncidentMonitor(
+            detector,
+            source,
+            sink=sink,
+            lookback=timedelta(seconds=settings.lookback_s),
+        )
+    if reporter is not None and monitor is not None:
         reporter.on_filed = _incident_sink(settings)
         monitor.add_listener(reporter.notify)
     dispatcher = build_dispatcher(settings)
@@ -257,18 +265,19 @@ def _serve(settings: GarageSettings, host: str, port: int) -> int:
 
     tasks: list[asyncio.Task[None]] = []
 
-    async def poll_events() -> None:
-        previous = _event_signature(source.directory)
+    async def poll_events(directory: Path, monitor: IncidentMonitor) -> None:
+        previous = _event_signature(directory)
         while True:
             await asyncio.sleep(settings.poll_interval_s)
-            current = _event_signature(source.directory)
+            current = _event_signature(directory)
             if current != previous:
                 previous = current
                 monitor.poke()
 
     async def start_background() -> None:
-        tasks.append(asyncio.create_task(monitor.run()))
-        tasks.append(asyncio.create_task(poll_events()))
+        if source is not None and monitor is not None:
+            tasks.append(asyncio.create_task(monitor.run()))
+            tasks.append(asyncio.create_task(poll_events(source.directory, monitor)))
         if reporter is not None:
             tasks.append(asyncio.create_task(reporter.run()))
         if dispatcher is not None:
@@ -393,6 +402,22 @@ def main(argv: list[str] | None = None) -> int:
     status = subparsers.add_parser("handoff-status", help="recover and poll a detached local run")
     status.add_argument("run_id")
 
+    service_parser = subparsers.add_parser("service", help="run Garage in the background as a macOS LaunchAgent")
+    services = service_parser.add_subparsers(dest="service_command", required=True)
+    install = services.add_parser("install", help="write and load the LaunchAgent")
+    install.add_argument("--checkout", type=Path, help="checkout to run (default: this Garage's checkout)")
+    install.add_argument("--manifest", type=Path, help="manifest to serve (default: <checkout>/garage.toml)")
+    install.add_argument("--data-dir", type=Path, help=f"GARAGE_DATA_DIR (default: {service.DEFAULT_DATA_DIR})")
+    install.add_argument("--port", type=int, default=service.DEFAULT_PORT)
+    install.add_argument("--dry-run", action="store_true", help="print the plist without touching launchd")
+    uninstall = services.add_parser("uninstall", help="unload and delete the LaunchAgent")
+    uninstall.add_argument("--dry-run", action="store_true")
+    services.add_parser("status", help="show launchd's view of the LaunchAgent")
+    services.add_parser("restart", help="restart the LaunchAgent")
+    update_parser = subparsers.add_parser("update", help="pull the running checkout, sync it and restart Garage")
+    update_parser.add_argument("--checkout", type=Path, help="checkout to update (default: this Garage's checkout)")
+    update_parser.add_argument("--no-restart", action="store_true")
+
     args = parser.parse_args(argv)
     log_level = logging.getLevelNamesMapping().get(os.getenv("GARAGE_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -401,6 +426,23 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(_handoff(args))
         if args.command == "handoff-status":
             return asyncio.run(_handoff_status(args))
+        if args.command == "service":
+            if args.service_command == "status":
+                return service.status()
+            if args.service_command == "restart":
+                service.restart()
+            elif args.service_command == "uninstall":
+                service.uninstall(service.resolve_paths(), dry_run=args.dry_run)
+            else:
+                paths = service.resolve_paths(args.checkout, args.manifest, args.data_dir, args.port)
+                service.install(paths, dry_run=args.dry_run)
+            return 0
+        if args.command == "update":
+            service.update(
+                (args.checkout or service.default_checkout()).expanduser().resolve(),
+                restart_service=not args.no_restart,
+            )
+            return 0
         if args.command == "schemas":
             args.out.mkdir(parents=True, exist_ok=True)
             for name, schema in json_schemas().items():

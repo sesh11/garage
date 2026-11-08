@@ -199,6 +199,79 @@ Local settings: `GARAGE_DATA_DIR` (default `~/.garage`), `GARAGE_LOCAL_TIMEOUT` 
 arbitrary commands as your user. A worktree isolates git changes, not filesystem access or secrets. Use trusted
 tasks/repositories. Cloud execution and live question relays are deferred.
 
+## Garage building Garage (macOS)
+
+Garage can work on its own repository. Three pieces make that possible:
+
+- **[garage.toml](garage.toml)** at the repository root is Garage's own manifest. It lives at the root, not in
+  `examples/`, because it is this repo's real config: `garage` finds `./garage.toml` by default, and the manifest
+  directory is the git checkout. It lists the checks agents must pass (`ruff check`, `ruff format --check`, `mypy`,
+  `pytest`) and the push and public-repo rules. Garage does not record events about itself yet, so `[signals]` and
+  `[detect]` are empty and incident detection is off; `garage serve` still runs the UI, inbox, request bridge and
+  dispatch. `garage report` needs a signal source, so it errors with this manifest.
+- **A LaunchAgent** (macOS's way of keeping a program running in the background and restarting it if it crashes),
+  installed with `garage service install`.
+- **`garage update`**, because a running Garage does not update itself after you merge a Garage PR.
+
+The manifest uses `agent = "devin"`: each fix runs on a cloud VM, so no agent ever touches the Mac checkout that runs
+Garage. To use a local CLI instead, set `agent = "claude-code"` or `"codex"` and set `GARAGE_LOCAL_REPO_PATH` to a
+second clone (not the running checkout); local worktrees go in `GARAGE_DATA_DIR/worktrees`.
+
+### Install
+
+Use a dedicated clone that neither you nor agents edit:
+
+```sh
+git clone https://github.com/sesh11/garage.git ~/dev/garage/garage-live
+cd ~/dev/garage/garage-live
+uv sync --locked
+```
+
+Create `~/dev/garage/garage-live/.env` (git ignores it; never commit or print it):
+
+```sh
+GARAGE_DISPATCH=1
+GARAGE_GITHUB_TOKEN=...   # can label and comment on sesh11/garage issues
+DEVIN_API_KEY=...
+DEVIN_ORG_ID=...
+# GARAGE_REPORT=1         # also file request-bridge requests as issues
+```
+
+Then preview and install the LaunchAgent:
+
+```sh
+.venv/bin/garage service install --dry-run   # prints ~/Library/LaunchAgents/ai.garage.serve.plist
+.venv/bin/garage service install
+.venv/bin/garage service status
+tail -f ~/Library/Logs/garage/serve.log
+```
+
+The agent runs `.venv/bin/garage serve --manifest garage.toml` from the checkout with `PYTHONPATH` and `PYTHONHOME`
+removed, so a hub environment cannot make Garage import an older `garage_sdk`. It sets `GARAGE_PORT=8771` and
+`GARAGE_DATA_DIR=~/.garage/garage` so it can run beside a Garage for another app on 8770 with `~/.garage`
+(the dispatch ledger is keyed by issue number, so two repositories must not share a data directory). Override with
+`--port`, `--data-dir`, `--manifest` or `--checkout`; values the plist sets win over `.env`.
+
+To put Garage to work, add the `factory:ready-for-fix` label to an issue in `sesh11/garage`. Garage checks on start
+and then every `[dispatch].interval` (1 hour); `garage service restart` checks right away.
+
+### Update after merging
+
+```sh
+env -u PYTHONPATH ~/dev/garage/garage-live/.venv/bin/garage update
+```
+
+`garage update` refuses if the checkout has local changes, runs `git pull --ff-only`, then `uv sync --locked`, then
+restarts the LaunchAgent (`launchctl kickstart -k`). If nothing changed it does nothing. `--no-restart` skips the
+restart. Manual equivalent:
+
+```sh
+cd ~/dev/garage/garage-live && git pull --ff-only && uv sync --locked
+launchctl kickstart -k gui/$(id -u)/ai.garage.serve
+```
+
+Remove the LaunchAgent with `garage service uninstall` (logs and data stay).
+
 ## Local checks
 
 Run from a checkout:

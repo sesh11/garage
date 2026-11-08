@@ -1,0 +1,42 @@
+# Garage's own manifest: how Garage builds Garage. Run with `garage serve --manifest garage.toml`
+# from a checkout, or install the macOS LaunchAgent with `garage service install` (see README).
+[app]
+id = "garage"
+repo = "sesh11/garage"
+
+# Garage does not record events about itself yet, so there is no signal source and no incident
+# detection. Garage still serves the UI, the inbox and the request bridge, and dispatches issues
+# labeled factory:ready-for-fix when GARAGE_DISPATCH=1.
+[signals]
+
+[detect]
+
+[build]
+setup = "uv sync --locked"
+check = [
+  "uv run ruff check .",
+  "uv run ruff format --check .",
+  "uv run mypy",
+  "uv run pytest -q",
+]
+
+[report]
+request_attribution = "Filed automatically by Garage (building itself)."
+max_new_issues_per_day = 5
+
+[dispatch]
+# devin runs each fix on a cloud VM, so agents never touch the Mac checkout that runs Garage.
+# To use a local CLI instead, set agent = "claude-code" or "codex" and point GARAGE_LOCAL_REPO_PATH
+# at a second clone (not the running checkout); worktrees go under GARAGE_DATA_DIR/worktrees.
+agent = "devin"
+base_branch = "main"
+interval = "1h"
+prompt_rules = [
+  "If pushing to origin fails with 403, push with `env -u GH_TOKEN git push https://github.com/{repo}.git <branch>`.",
+  "The repository is public: PRs, issues and comments must contain no secrets, tokens, personal data, or transcripts.",
+  "In the PR, say what still needs testing on the maintainer's Mac (for example LaunchAgent or launchctl behavior).",
+]
+
+[policy]
+needs_approval = ["triage", "plan", "release"]
+auto_release = false
