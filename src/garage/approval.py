@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from garage_sdk import emit
 from garage.store import Store
-from garage.report import READY, FIXING, REQUEST, INCIDENT, OBSERVED, PROPOSED, DISPATCHED
+from garage.report import READY, FIXING, LABELS, REQUEST, INCIDENT, OBSERVED, PROPOSED, DISPATCHED
 from garage.tracker import Tracker, IssueFeed, IssueRecord
 from garage_sdk.api import Source, ItemKind, InboxItem, IssueLink, ItemState, ClientKind, SubmitWork
 
@@ -238,6 +238,7 @@ class IssueWatcher:
         self.on_approved = on_approved
         self.clock = clock
         self.actions: list[str] = []
+        self._labels_ready = False
 
     def _load(self) -> IntakeCursor:
         try:
@@ -276,6 +277,9 @@ class IssueWatcher:
         issues, etag, unchanged = await self.tracker.changed_since(cursor.since or cursor.baseline, cursor.etag)
         if unchanged:
             return []
+        if issues and not self._labels_ready and not self.dry_run:
+            await self.tracker.ensure_labels(LABELS)
+            self._labels_ready = True
         done: list[str] = []
         failed = False
         for issue in issues:
