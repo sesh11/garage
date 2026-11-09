@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset PYTHONPATH PYTHONHOME
 
 usage() {
   printf 'Usage: %s <PR_NUMBER> [--clean]\n' "$0" >&2
@@ -62,7 +63,7 @@ else
 fi
 
 cd "$WORKTREE"
-env -u PYTHONPATH -u PYTHONHOME uv sync --locked
+uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
@@ -70,7 +71,6 @@ uv run pytest -q
 
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/garage-pr-$PR_NUMBER.XXXXXX")"
 PORT="${GARAGE_TRY_PORT:-8772}"
-LOG_FILE="$DATA_DIR/serve.log"
 SERVE_ARGS=(serve --port "$PORT")
 if [[ -f "$HOME/.garage/projects.toml" ]]; then
   SERVE_ARGS+=(--projects "$HOME/.garage/projects.toml")
@@ -78,9 +78,8 @@ elif [[ -f "$WORKTREE/examples/projects.toml" ]]; then
   SERVE_ARGS+=(--projects "$WORKTREE/examples/projects.toml")
 fi
 
-nohup env -u PYTHONPATH -u PYTHONHOME -u GARAGE_PROJECTS -u GARAGE_MANIFEST \
+trap 'rm -rf "$DATA_DIR"' EXIT
+printf 'Garage test instance: http://127.0.0.1:%s\nData: %s\n' "$PORT" "$DATA_DIR"
+env -u GARAGE_PROJECTS -u GARAGE_MANIFEST \
   GARAGE_DISPATCH=0 GARAGE_REPORT=0 GARAGE_DATA_DIR="$DATA_DIR" \
-  uv run garage "${SERVE_ARGS[@]}" > "$LOG_FILE" 2>&1 < /dev/null &
-PID=$!
-printf 'Garage test instance: http://127.0.0.1:%s\nPID: %s\nData: %s\nLog: %s\n' \
-  "$PORT" "$PID" "$DATA_DIR" "$LOG_FILE"
+  uv run garage "${SERVE_ARGS[@]}"

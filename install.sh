@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset PYTHONPATH PYTHONHOME
 
 if ! command -v uv >/dev/null 2>&1; then
   printf '%s\n' 'uv is required. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh' >&2
@@ -8,7 +9,7 @@ fi
 
 SOURCE="${GARAGE_INSTALL_SOURCE:-git+https://github.com/sesh11/garage}"
 REF="${GARAGE_INSTALL_REF:-main}"
-env -u PYTHONPATH -u PYTHONHOME uv tool install --reinstall "$SOURCE@$REF"
+uv tool install --reinstall "$SOURCE@$REF"
 
 mkdir -p "$HOME/.garage"
 

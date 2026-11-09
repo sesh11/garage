@@ -308,9 +308,9 @@ From your development clone, validate a PR in an isolated worktree and start a t
 scripts/try-pr.sh 123
 ```
 
-The script runs sync, lint, formatting, type checks and tests before starting the server. It prints the URL, PID and
-log path. Use `GARAGE_TRY_PORT` to choose another port, or `GARAGE_TRY_DIR` to choose another parent folder. Stop
-the printed process when done, then remove the test worktree and local branch with:
+The script runs sync, lint, formatting, type checks and tests before starting the server in the foreground. It prints
+the URL; press Ctrl-C to stop the server and remove its temporary data. Use `GARAGE_TRY_PORT` to choose another port,
+or `GARAGE_TRY_DIR` to choose another parent folder. Remove the test worktree and local branch with:
 
 ```sh
 scripts/try-pr.sh 123 --clean
