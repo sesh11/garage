@@ -290,6 +290,7 @@ LaunchAgent on macOS. Edit the paths in `~/.garage/projects.toml` for your machi
 until enabled in `.env`; keep credentials private and never put them in a projects file, issue, PR, or log.
 
 ```sh
+garage service install
 garage service status
 garage service restart
 tail -f ~/Library/Logs/garage/serve.log
@@ -321,8 +322,6 @@ To uninstall the LaunchAgent and tool:
 garage service uninstall
 uv tool uninstall garage
 ```
-
-Remove the LaunchAgent with `garage service uninstall` (logs and data stay).
 
 ## Local checks
 
