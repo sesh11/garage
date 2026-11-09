@@ -20,8 +20,15 @@ from garage.ui import UiProject, create_app
 from garage_sdk import configure
 from garage.store import UNASSIGNED, Store
 from garage.github import GitHubIssues
-from garage.report import READY, DEFAULT_ATTRIBUTION, DEFAULT_REQUEST_ATTRIBUTION, RequestLogger, IncidentReporter
-from garage.tracker import Tracker, IssueRecord
+from garage.report import (
+    READY,
+    LABELS,
+    DEFAULT_ATTRIBUTION,
+    DEFAULT_REQUEST_ATTRIBUTION,
+    RequestLogger,
+    IncidentReporter,
+)
+from garage.tracker import Tracker, IssueRecord, canonical_label
 from garage_sdk.api import ItemKind, IssueLink, ItemState, ClientKind, SubmitWork, json_schemas
 from garage.approval import (
     Approvals,
@@ -578,6 +585,25 @@ async def _intake(settings: GarageSettings, dry_run: bool, since: str | None) ->
     return await watcher.poll_once()
 
 
+async def _migrate_labels(settings: GarageSettings, apply: bool, include_closed: bool) -> list[str]:
+    """Relabel issues from the old ``factory:`` names to ``garage:``; only print the plan unless ``apply``."""
+    if not settings.github_token:
+        raise ValueError("GARAGE_GITHUB_TOKEN is not set; the migration reads the project's GitHub issues")
+    github = GitHubIssues(settings.repo, settings.github_token)
+    found = await github.legacy_labeled(include_closed=include_closed)
+    if apply and found:
+        await github.ensure_labels(LABELS)
+    actions: list[str] = []
+    for number, title, old in found:
+        new = [canonical_label(name) for name in old]
+        if apply:
+            await github.add_labels(number, new)
+            for name in old:
+                await github.remove_label(number, name)
+        actions.append(f"#{number} {title}: {', '.join(old)} -> {', '.join(new)}")
+    return actions
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the Garage CLI."""
     load_dotenv()
@@ -629,6 +655,18 @@ def main(argv: list[str] | None = None) -> int:
     intake_parser.add_argument("--dry-run", action="store_true", help="print actions without changing anything")
     intake_parser.add_argument("--since", help="also look at issues opened this far back, such as 1h or 2d")
     intake_parser.set_defaults(offline=False)
+
+    labels_parser = subparsers.add_parser("labels", help="manage Garage's GitHub labels")
+    label_commands = labels_parser.add_subparsers(dest="labels_command", required=True)
+    migrate = label_commands.add_parser(
+        "migrate", help="rename old factory:* labels to garage:* (prints the plan unless --apply)"
+    )
+    migrate.add_argument("--manifest", type=Path)
+    migrate.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+    migrate.add_argument("--project", help="only this project")
+    migrate.add_argument("--dry-run", action="store_true", help="print the plan without changing anything (default)")
+    migrate.add_argument("--apply", action="store_true", help="relabel the issues and create the garage:* labels")
+    migrate.add_argument("--include-closed", action="store_true", help="closed issues too, not only open ones")
 
     ask_parser = subparsers.add_parser("ask", help="file a request as a proposed GitHub issue")
     ask_parser.add_argument("--manifest", type=Path)
@@ -717,6 +755,18 @@ def main(argv: list[str] | None = None) -> int:
                 print("several projects: name one with --project", file=sys.stderr)
                 return 2
             return asyncio.run(_ask(chosen[0], args.text))
+        if args.command == "labels":
+            apply = args.apply and not args.dry_run
+            prefix = "" if apply else "[dry run] "
+            for project in only(projects, args.project):
+                actions = asyncio.run(_migrate_labels(project, apply, args.include_closed))
+                for action in actions:
+                    print(f"{prefix}{project.repo}{action}")
+                if not actions:
+                    print(f"{prefix}no factory:* labels left in {project.repo}")
+            if not apply:
+                print("Nothing changed. Run again with --apply to relabel.")
+            return 0
         if args.command in ("approve", "decline"):
             if args.project:
                 only(projects, args.project)

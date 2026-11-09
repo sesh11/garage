@@ -24,18 +24,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-INCIDENT = "factory:incident"
-REQUEST = "factory:request"
-OBSERVED = "factory:observed"
-READY = "factory:ready-for-fix"
-PROPOSED = "factory:proposed"
-FIXING = "factory:fixing"
-DISPATCHED = "factory:dispatched"
+INCIDENT = "garage:incident"
+REQUEST = "garage:request"
+OBSERVED = "garage:observed"
+READY = "garage:ready-for-fix"
+PROPOSED = "garage:proposed"
+FIXING = "garage:fixing"
+DISPATCHED = "garage:dispatched"
 LABELS: dict[str, tuple[str, str]] = {
     INCIDENT: ("5319e7", "Filed automatically from an incident the app detected"),
     REQUEST: ("1d76db", "Fix or feature request submitted through the bridge"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),
-    PROPOSED: ("bfd4f2", "Waiting for the owner's approval; add factory:ready-for-fix to approve, close to decline"),
+    PROPOSED: ("bfd4f2", "Waiting for the owner's approval; add garage:ready-for-fix to approve, close to decline"),
     READY: ("d93f0b", "Approved: ready for a coding-agent fix session"),
     FIXING: ("0e8a16", "A Devin session is working on it"),
     DISPATCHED: ("c5def5", "A Devin fix session was started; remove to allow another"),
@@ -147,8 +147,8 @@ class IncidentReporter:
     ) -> None:
         """Configure the GitHub client, safety caps, and dry-run mode.
 
-        With ``needs_approval`` an incident reaching its threshold is labeled ``factory:proposed`` and waits for
-        the owner; without it, it goes straight to ``factory:ready-for-fix`` as before.
+        With ``needs_approval`` an incident reaching its threshold is labeled ``garage:proposed`` and waits for
+        the owner; without it, it goes straight to ``garage:ready-for-fix`` as before.
         """
         self.issues = issues
         self.needs_approval = needs_approval

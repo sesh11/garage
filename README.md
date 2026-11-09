@@ -28,7 +28,7 @@ creation caps and deduplication by fingerprint (a stable identifier for a rule a
 manifest-driven dispatch with a duplicate ledger (a local record of started sessions) and a per-session
 ACU (Agent Compute Unit) limit, a local incidents UI, a loopback request bridge for local clients, and
 [projects](#projects): one `garage serve` can work several repositories, tagging every item and run with its project,
-and an [approval gate](#approval-nothing-starts-until-you-say-yes): new issues wait as `factory:proposed` until you
+and an [approval gate](#approval-nothing-starts-until-you-say-yes): new issues wait as `garage:proposed` until you
 approve them on GitHub, on the dashboard, or in the terminal. A manifest is the app's `garage.toml` configuration file.
 
 **Not yet:** the triage and plan step (a PM/design pass posted on the issue before dispatch), release/deploy and
@@ -38,54 +38,59 @@ See [implemented versus future work](docs/implemented-vs-future.md).
 
 ## Issue labels and lifecycle
 
-The names retain the `factory:` prefix for compatibility:
+Garage's labels use the `garage:` prefix. They used to be `factory:*`; Garage still reads an old `factory:X`
+label as `garage:X` (so nothing in flight is lost or dispatched twice) but only ever writes `garage:*`.
+`garage labels migrate --project <name>` prints which open issues still carry old labels; add `--apply` to create
+the `garage:*` labels and relabel them (`--include-closed` covers closed issues too). Event types (`factory.*`),
+hidden issue-body markers (`<!-- factory-fingerprint: ... -->`) and the `legacy_ledger` setting keep their names.
 
-- `factory:proposed` (new) means "waiting for your approval". Adding `factory:ready-for-fix` approves; closing the
+
+- `garage:proposed` (new) means "waiting for your approval". Adding `garage:ready-for-fix` approves; closing the
   issue declines. See [Approval](#approval-nothing-starts-until-you-say-yes).
-- `IncidentReporter` in `src/garage/report.py` creates `factory:incident` issues with `factory:observed` below
-  the rule's threshold, and with `factory:proposed` at the threshold. On an existing issue, reaching the threshold
+- `IncidentReporter` in `src/garage/report.py` creates `garage:incident` issues with `garage:observed` below
+  the rule's threshold, and with `garage:proposed` at the threshold. On an existing issue, reaching the threshold
   adds proposed and removes observed. A human can add ready-for-fix at any time to approve it sooner.
-- `RequestLogger` in the same file creates voice/user request issues with `factory:request` and `factory:proposed`,
+- `RequestLogger` in the same file creates voice/user request issues with `garage:request` and `garage:proposed`,
   skipping observed.
 - The issue watcher (`IssueWatcher` in `src/garage/approval.py`) labels issues people open by hand
-  `factory:proposed` too, so every new issue waits for approval.
+  `garage:proposed` too, so every new issue waits for approval.
 - If the manifest's `[policy].needs_approval` list drops `"triage"`, the gate is off and the old behavior returns:
-  incidents and requests get `factory:ready-for-fix` directly and new issues are taken in as already approved.
-- `Dispatcher` in `src/garage/dispatch.py` starts sessions for open ready issues without `factory:dispatched`.
-  It saves the session in its ledger before adding **both** `factory:dispatched` and `factory:fixing`.
+  incidents and requests get `garage:ready-for-fix` directly and new issues are taken in as already approved.
+- `Dispatcher` in `src/garage/dispatch.py` starts sessions for open ready issues without `garage:dispatched`.
+  It saves the session in its ledger before adding **both** `garage:dispatched` and `garage:fixing`.
   This path does not remove ready-for-fix. On session completion it comments with the outcome and removes fixing,
   leaving dispatched; removing dispatched allows another attempt.
 - Separately, `POST /api/requests/{number}/fixing` calls `RequestLogger.mark_fixing` through the bridge:
-  it adds `factory:fixing` and removes `factory:ready-for-fix`.
+  it adds `garage:fixing` and removes `garage:ready-for-fix`.
 - The reporter reopens a closed incident when samples newer than its closure appear, resetting observed/ready/fixing
   based on the fresh count. It does not clear dispatched. This is recurrence reporting, not post-release
   confirmation: Garage does not merge, deploy, or close issues as confirmed fixed.
 
 ## Approval: nothing starts until you say yes
 
-Every new piece of work becomes a GitHub issue labeled `factory:proposed` and an inbox item in the state
+Every new piece of work becomes a GitHub issue labeled `garage:proposed` and an inbox item in the state
 `awaiting_approval`. No coding agent starts on it until you approve. You can decide in any of three places, and all
 three change the same record (the issue's labels and the item in Garage's local SQLite database):
 
 | Where | Approve | Decline |
 | --- | --- | --- |
-| GitHub (phone) | add the `factory:ready-for-fix` label | close the issue |
+| GitHub (phone) | add the `garage:ready-for-fix` label | close the issue |
 | Dashboard (`garage serve`, Mac) | **Approve** under "Waiting for you" | **Decline** |
 | Terminal | `garage approve <id>` | `garage decline <id>` |
 
 `<id>` is the inbox item id (`item_...`), the issue number (`42` or `#42`), or the issue URL; add `--project` when
-the same number exists in two projects. Approving from the dashboard or terminal adds `factory:ready-for-fix`,
-removes `factory:proposed`, and comments on the issue; declining comments and closes the issue as "not planned".
+the same number exists in two projects. Approving from the dashboard or terminal adds `garage:ready-for-fix`,
+removes `garage:proposed`, and comments on the issue; declining comments and closes the issue as "not planned".
 Approving on GitHub is picked up by the watcher on its next poll. Reopening a declined issue asks again.
 
 Ways work comes in:
 
-- `garage ask --project <name> "Add a night mode"` files a request issue (`factory:request` + `factory:proposed`).
+- `garage ask --project <name> "Add a night mode"` files a request issue (`garage:request` + `garage:proposed`).
   `--project` is optional with one project. The voice/bridge path (`POST /api/requests`, `/v1/items`) does the same.
 - Issues people open on GitHub in a project's repository are picked up by the **issue watcher**, labeled
-  `factory:proposed`, and get a comment explaining how to approve.
-- Incidents that reach their rule's threshold are labeled `factory:proposed`. Below the threshold they stay
-  `factory:observed` and are not in the approval list yet, so one noisy blip does not ask for your attention.
+  `garage:proposed`, and get a comment explaining how to approve.
+- Incidents that reach their rule's threshold are labeled `garage:proposed`. Below the threshold they stay
+  `garage:observed` and are not in the approval list yet, so one noisy blip does not ask for your attention.
 
 The watcher runs inside `garage serve` when `GARAGE_INTAKE=1` (one watcher per project), or once with
 `garage intake` (`--dry-run` prints what it would do; `--since 2d` also looks at older issues). It only takes in
@@ -93,8 +98,8 @@ issues opened after it first started, so turning it on does not flood you with o
 
 - pull requests (GitHub's issue list includes them; they are already someone's work),
 - closed issues,
-- issues an agent already has (`factory:dispatched` or `factory:fixing`),
-- incidents still below their threshold (`factory:observed`),
+- issues an agent already has (`garage:dispatched` or `garage:fixing`),
+- incidents still below their threshold (`garage:observed`),
 - issues opened before the watcher started.
 
 It polls every 60 seconds by default (`GARAGE_INTAKE_INTERVAL`). Each poll is one GitHub request per project, asking
@@ -104,7 +109,7 @@ a personal access token gets. Even with 10 projects that is at most 600 requests
 calls Garage the moment an issue changes), which needs Garage reachable from the internet, so it is not used yet.
 
 Dispatch (`garage dispatch`, or `garage serve` with `GARAGE_DISPATCH=1`) only starts approved issues: ones labeled
-`factory:ready-for-fix`, and never one Garage recorded as declined. Approving from the dashboard wakes the dispatcher
+`garage:ready-for-fix`, and never one Garage recorded as declined. Approving from the dashboard wakes the dispatcher
 in the same `garage serve` immediately; a GitHub or terminal approval wakes it on the watcher's next poll. An approved item is also where a future plan step will fit: `next_step()` in
 `src/garage/approval.py` returns `"dispatch"` today, and a PM/design step would return `"plan"` there and hold the
 issue until its plan is approved.
@@ -266,7 +271,7 @@ it must match that host using `http`; `Sec-Fetch-Site`, if present, must be `sam
 from a non-browser client without cross-origin metadata or from the same origin. `POST /api/requests` requires
 `Content-Type: application/json` (optional parameters such as `charset=utf-8` are accepted).
 
-Filed requests become GitHub issues labeled `factory:request` and `factory:proposed` and wait for your
+Filed requests become GitHub issues labeled `garage:request` and `garage:proposed` and wait for your
 [approval](#approval-nothing-starts-until-you-say-yes); once approved, Garage dispatches them like any other ready
 issue, and approving from the dashboard wakes the dispatcher immediately. `GET /api/requests/{number}` reports dispatch state, for example:
 
@@ -358,7 +363,7 @@ garage client remove me
 Repeating a submission ID for the same client returns the original item. Owners
 can read all items; other clients can only read and cancel their own. Without a
 repository, an item waits in `needs_repo`. Items filed as GitHub issues wait in
-`awaiting_approval` (labeled `factory:proposed`) until you approve or decline them.
+`awaiting_approval` (labeled `garage:proposed`) until you approve or decline them.
 Failed filing keeps the item so the same submission can retry. Cancellation only
 changes the local record; it does not close GitHub issues or stop agents. An agent
 finishing is not proof a fix shipped, so it does not automatically mark work done.

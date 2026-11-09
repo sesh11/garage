@@ -32,12 +32,12 @@ def test_report_cli_dry_run_and_token_guard(monkeypatch, capsys) -> None:
 
     async def fake_report(settings, since, dry_run, offline=False):
         calls.append((since, dry_run))
-        return ["open [factory:incident]: Runtime error"]
+        return ["open [garage:incident]: Runtime error"]
 
     monkeypatch.setattr(cli, "_report", fake_report)
     assert cli.main(["report", "--dry-run", "--since", "6h", "--manifest", str(example_manifest())]) == 0
     assert calls == [("6h", True)]
-    assert "open [factory:incident]" in capsys.readouterr().out
+    assert "open [garage:incident]" in capsys.readouterr().out
 
     settings = settings_from_env(example_manifest())
     monkeypatch.setattr(cli, "settings_from_env", lambda manifest: settings)
@@ -65,8 +65,8 @@ def test_report_dry_run_reads_existing_issue_without_mutating(monkeypatch, tmp_p
 
     output = capsys.readouterr().out
     assert "update #17" in output
-    assert "open [factory:incident" not in output
-    assert tracker.calls == ["list_issues:factory:incident"]
+    assert "open [garage:incident" not in output
+    assert tracker.calls == ["list_issues:garage:incident"]
     assert tracker.mutations == []
 
 
@@ -98,7 +98,7 @@ def test_dispatch_dry_run_lists_ready_issue_and_prompt_without_agent_calls(monke
     assert "start session for #23" in output
     assert "----- prompt for #23 -----" in output
     assert "Fix GitHub issue #23" in output
-    assert tracker.calls == ["list_issues:factory:ready-for-fix", "list_issues:factory:ready-for-fix"]
+    assert tracker.calls == ["list_issues:garage:ready-for-fix", "list_issues:garage:ready-for-fix"]
     assert tracker.mutations == []
     assert agent.calls == []
 
@@ -116,7 +116,7 @@ def test_offline_report_and_dispatch_do_not_construct_github_client(monkeypatch,
     assert cli.main(["report", "--offline", "--manifest", str(example_manifest())]) == 0
     report_output = capsys.readouterr().out
     assert "existing issues aren't checked" in report_output
-    assert "[dry run] open [factory:incident" in report_output
+    assert "[dry run] open [garage:incident" in report_output
 
     assert cli.main(["dispatch", "--offline", "--manifest", str(example_manifest())]) == 0
     dispatch_output = capsys.readouterr().out

@@ -1,14 +1,14 @@
-"""The approval gate: new work waits as ``factory:proposed`` until the owner approves or declines it.
+"""The approval gate: new work waits as ``garage:proposed`` until the owner approves or declines it.
 
 One record per piece of work lives in the local inbox (SQLite). Three surfaces change it, and all three end in the
 same place:
 
-* GitHub (the phone): adding ``factory:ready-for-fix`` approves; closing the issue declines. The
+* GitHub (the phone): adding ``garage:ready-for-fix`` approves; closing the issue declines. The
   :class:`IssueWatcher` notices on its next poll and updates the inbox.
 * The dashboard's "Waiting for you" list and the ``garage approve`` / ``garage decline`` commands call
   :class:`Approvals`, which changes the GitHub issue first and then the inbox, so the next poll sees nothing new.
 
-Only an approved issue (one labeled ``factory:ready-for-fix``) is ever dispatched to a coding agent.
+Only an approved issue (one labeled ``garage:ready-for-fix``) is ever dispatched to a coding agent.
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class Approvals:
         return target, target.tracker if target is not None else None
 
     async def approve(self, item: InboxItem, by: str, via: str = "cli") -> InboxItem:
-        """Approve: label the issue ``factory:ready-for-fix``, mark the item approved, and wake the dispatcher."""
+        """Approve: label the issue ``garage:ready-for-fix``, mark the item approved, and wake the dispatcher."""
         async with self._lock:
             item = self.store.get(item.id) or item
             if item.state not in BEFORE_APPROVAL:
@@ -202,7 +202,7 @@ class IssueWatcher:
     """Poll one project's repository for new and changed issues and keep the inbox in step with GitHub.
 
     New issues opened after the watcher first started (its *baseline*) are recorded and labeled
-    ``factory:proposed``. Changes made on GitHub (approve by label, decline by closing, reopen) are copied into the
+    ``garage:proposed``. Changes made on GitHub (approve by label, decline by closing, reopen) are copied into the
     inbox. Pull requests, closed issues, issues older than the baseline and issues an agent already has are skipped.
     """
 

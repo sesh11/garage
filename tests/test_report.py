@@ -46,7 +46,7 @@ async def test_report_dry_run_prints_would_file_without_mutation() -> None:
     tracker = FakeTracker()
     reporter = IncidentReporter(tracker, dry_run=True)
     actions = await reporter.sync([sample_incident()])
-    assert actions[0].startswith("open [factory:incident, factory:proposed]")
+    assert actions[0].startswith("open [garage:incident, garage:proposed]")
     assert not tracker.mutations
 
 

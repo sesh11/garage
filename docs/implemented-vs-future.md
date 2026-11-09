@@ -18,13 +18,15 @@
   `assign`, `--project` on `report`/`dispatch`) and dashboard filter by project. A single manifest is a one-project
   setup.
 - Approval gate: new issues (requests, incidents at their threshold, and issues people open on GitHub) are labeled
-  `factory:proposed` and wait in the inbox as `awaiting_approval`. Approve by adding `factory:ready-for-fix` on
+  `garage:proposed` and wait in the inbox as `awaiting_approval`. Approve by adding `garage:ready-for-fix` on
   GitHub, the dashboard's Approve button, or `garage approve <id>`; decline by closing the issue, Decline, or
   `garage decline <id>`. All three update the same issue and inbox record. `garage ask --project <name> "..."` files
   a proposed request. The issue watcher (`GARAGE_INTAKE=1` in `garage serve`, or `garage intake`) polls each
   project's repository every 60 seconds with ETags and skips pull requests, closed issues, issues an agent already
   has, below-threshold incidents, and issues older than its start. Dispatch starts only approved issues and never
   one declined in Garage. `[policy].needs_approval` without `"triage"` turns the gate off.
+- Label namespace: Garage writes only `garage:*` labels and still reads old `factory:*` labels as their `garage:`
+  equivalents. `garage labels migrate --project <name>` lists open issues with old labels; `--apply` relabels them.
 - Root Ruff, mypy, and pytest checks cover the service and SDK.
 
 ## Not implemented yet

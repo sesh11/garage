@@ -7,6 +7,20 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+LABEL_PREFIX = "garage:"
+LEGACY_LABEL_PREFIX = "factory:"
+
+
+def canonical_label(name: str) -> str:
+    """Read a label under its current name: ``factory:X`` (the old prefix) is the same label as ``garage:X``."""
+    return LABEL_PREFIX + name.removeprefix(LEGACY_LABEL_PREFIX) if name.startswith(LEGACY_LABEL_PREFIX) else name
+
+
+def legacy_label(name: str) -> str | None:
+    """Return the old ``factory:`` name of a ``garage:`` label, or None for any other label."""
+    return LEGACY_LABEL_PREFIX + name.removeprefix(LABEL_PREFIX) if name.startswith(LABEL_PREFIX) else None
+
+
 _MARKER = re.compile(r"<!--\s*factory-(?P<key>[a-z-]+):\s*(?P<value>[^\s>]+)\s*-->")
 
 
