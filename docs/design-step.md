@@ -44,13 +44,13 @@ GitHub label, the dashboard, or `garage approve`) and before dispatch, per proje
 
 ```mermaid
 flowchart LR
-    NEW["New issue<br/>(any source)"] --> PROP["factory:proposed"]
-    PROP -- "approve (step 1, built in parallel)" --> PLAN["factory:planning<br/>planning run"]
+    NEW["New issue<br/>(any source)"] --> PROP["garage:proposed"]
+    PROP -- "approve (step 1, built in parallel)" --> PLAN["garage:planning<br/>planning run"]
     PROP -- "approve build<br/>(tiny ask, skip design)" --> READY
-    PLAN --> POSTED["factory:design-ready<br/>design comment posted"]
+    PLAN --> POSTED["garage:design-ready<br/>design comment posted"]
     POSTED -- "reply with edits" --> PLAN
-    POSTED -- "/approve" --> READY["factory:ready-for-fix"]
-    POSTED -- "/decline reason" --> DECL["closed, factory:declined"]
+    POSTED -- "/approve" --> READY["garage:ready-for-fix"]
+    POSTED -- "/decline reason" --> DECL["closed, garage:declined"]
     READY --> BUILD["build run → PR<br/>(includes decision record)"]
     BUILD -- "he merges" --> MEM[("docs/decisions/<br/>in the repo")]
     BUILD -- "builder finds design wrong" --> PLAN
@@ -61,9 +61,9 @@ Two approval points per ask, matching `[policy].needs_approval = ["triage", "pla
 For tiny asks, approving with "build" at step 1 counts as approving the ask *as its own plan*: no planning run, no
 decision record. Only Nithin makes that call; the planner never skips itself.
 
-Today's labels stay. New: `factory:planning`, `factory:design-ready`, `factory:declined`. `factory:ready-for-fix`
+Labels use the `garage:` names from the approval-step PR (#23), which keeps the old `factory:` names readable on
+existing issues. New here: `garage:planning`, `garage:design-ready`, `garage:declined`. `garage:ready-for-fix`
 now means "design approved (or skipped)", which is what dispatch already waits for, so dispatch does not change.
-(The approval step's own label names win if they differ; this doc assumes `factory:proposed`.)
 
 ## 2. Who runs the PM and design step
 
@@ -113,7 +113,7 @@ in this PR and is open question 1.
   stale_after = "14d"           # see section 9
   ```
 
-  Plus a workspace-wide daily planning budget; when it is used up, approved items wait in `factory:planning` with a
+  Plus a workspace-wide daily planning budget; when it is used up, approved items wait in `garage:planning` with a
   comment saying why. Each run's cost is stored with the design and shown on the dashboard.
 
 ## 3. What gets posted on the issue
@@ -171,7 +171,7 @@ Rules:
   **"Changes a past decision"** in bold so he cannot miss it.
 - "Records a decision" is one sentence, or "none" for designs that make no lasting choice (most bug fixes).
 - If the planner has questions it cannot answer from the repo, it says so and recommends nothing; Garage moves the
-  issue to `factory:needs-info` instead of `design-ready`.
+  issue to `garage:needs-info` instead of `design-ready`.
 
 ## 4. Approving and editing from the phone
 
@@ -179,11 +179,11 @@ The GitHub mobile app is the phone client: he gets a notification for the design
 
 | He replies | Garage does |
 |---|---|
-| `/approve` | approves this revision with the recommended option; label → `factory:ready-for-fix` |
+| `/approve` | approves this revision with the recommended option; label → `garage:ready-for-fix` |
 | `/approve B` | approves with option B instead (the record says he overrode the recommendation) |
 | `/approve no-record` or `/approve record` | turns the decision record off or on |
 | any other text | treats it as edits: starts a new planning run with his reply as input, posts revision 2 |
-| `/decline <reason>` | closes the issue with `factory:declined`; reason kept (section 7) |
+| `/decline <reason>` | closes the issue with `garage:declined`; reason kept (section 7) |
 | `/answer <text>` | answers the planner's questions (from `needs-info`), then re-plans |
 
 - **Edits in place also work**: he can edit the design comment's text on GitHub and then reply `/approve`. Garage
@@ -301,7 +301,7 @@ Garage (still no model: keyword and path overlap, then maybe local embeddings). 
 
 ## 7. Declined designs
 
-- `/decline <reason>` closes the issue with `factory:declined` and his reason in the closing comment, so the memory
+- `/decline <reason>` closes the issue with `garage:declined` and his reason in the closing comment, so the memory
   is public and searchable on GitHub without Garage.
 - Garage stores the declined design and reason in its database and feeds overlapping ones to future planners
   ("this was declined on 2026-11-20 because …").
@@ -336,9 +336,9 @@ a workspace setting `decisions_repo = "owner/repo"` naming one repo whose `docs/
 
 | Case | What happens |
 |---|---|
-| **Planner misread the ask** | He replies with what's wrong; revision 2. After `max_revisions` Garage stops re-planning, labels `factory:needs-info`, and asks him to write the need in his own words. |
-| **Planning run fails** (timeout, over budget, bad JSON) | Retried once; then a one-line comment "planning failed: over budget" and the issue stays in `factory:planning` for him to retry (`garage plan d-41`) or approve as a build. |
-| **Builder finds the design wrong** | The work order already says "stop and report instead of improvising". Garage moves the issue back to `factory:planning`, posts the builder's finding, and re-plans with it. No decision record lands. |
+| **Planner misread the ask** | He replies with what's wrong; revision 2. After `max_revisions` Garage stops re-planning, labels `garage:needs-info`, and asks him to write the need in his own words. |
+| **Planning run fails** (timeout, over budget, bad JSON) | Retried once; then a one-line comment "planning failed: over budget" and the issue stays in `garage:planning` for him to retry (`garage plan d-41`) or approve as a build. |
+| **Builder finds the design wrong** | The work order already says "stop and report instead of improvising". Garage moves the issue back to `garage:planning`, posts the builder's finding, and re-plans with it. No decision record lands. |
 | **Design goes stale** | Before dispatch, and for any approved design older than `stale_after`, Garage checks whether files in the design's areas changed since its `base` commit or a new decision in those areas was accepted. If so it runs a cheap re-check that either confirms ("still valid") or posts a revision for approval. Stale designs are never dispatched silently. |
 | **Design conflicts with a past decision** | The planner must list it under "Changes". Garage also checks mechanically: if a cited or overlapping decision says the opposite and "Changes" is empty, the design is sent back once. Approving a design that changes a decision approves the supersession. |
 | **Two in-flight designs conflict** | Garage sees overlapping areas between approved-not-built designs and notes it on the newer one's card; the newer planner is given the older design. |
@@ -365,7 +365,7 @@ Each PR is usable on its own. Code PRs keep `packages/garage-sdk/src` changes ad
 2. **Design schema + post + approve.** `Design` and `DecisionRecord` models in the SDK; Garage renders the comment;
    `/approve`, `/approve B`, edit replies, `/decline` parsed from issue comments (needs the approval step);
    `garage design post ITEM --file design.json` and a `design` field on `/v1/items` for the shortcut in section 2.
-   Usable alone: he or a Claude Code chat drafts designs; approval moves issues to `factory:ready-for-fix`.
+   Usable alone: he or a Claude Code chat drafts designs; approval moves issues to `garage:ready-for-fix`.
 3. **Planning runs.** Read-only runs on Claude Code and Codex (local) and Devin; context pack; cost caps and daily
    budget; retries and failure comments.
 4. **Design → build → memory.** Work order carries the approved design and record; PR file check; post-merge sync;
