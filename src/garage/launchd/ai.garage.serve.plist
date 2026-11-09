@@ -13,11 +13,11 @@
         <string>PYTHONHOME</string>
         <string>$garage_bin</string>
         <string>serve</string>
-        <string>--manifest</string>
-        <string>$manifest</string>
+        <string>--projects</string>
+        <string>$projects_file</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>$checkout</string>
+    <string>$data_dir</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -28,6 +28,8 @@
         <string>$data_dir</string>
         <key>GARAGE_PORT</key>
         <string>$port</string>
+        <key>GARAGE_PROJECTS</key>
+        <string>$projects_file</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

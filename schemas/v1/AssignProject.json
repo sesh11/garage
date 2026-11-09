@@ -1,0 +1,15 @@
+{
+  "additionalProperties": false,
+  "description": "Move an item to a project, for example out of ``needs_repo``.",
+  "properties": {
+    "project": {
+      "title": "Project",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project"
+  ],
+  "title": "AssignProject",
+  "type": "object"
+}

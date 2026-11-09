@@ -1,4 +1,4 @@
-"""Run Garage as a macOS LaunchAgent and update the running checkout."""
+"""Run Garage as a macOS LaunchAgent and update the installed tool."""
 
 import os
 import sys
@@ -14,8 +14,11 @@ from importlib.resources import files
 
 
 LABEL = "ai.garage.serve"
-DEFAULT_PORT = 8771
-DEFAULT_DATA_DIR = Path("~/.garage/garage")
+DEFAULT_PORT = 8770
+GARAGE_HOME = Path("~/.garage").expanduser()
+DEFAULT_PROJECTS = GARAGE_HOME / "projects.toml"
+DEFAULT_SOURCE = "git+https://github.com/sesh11/garage"
+DEFAULT_REF = "main"
 
 _UV_CANDIDATES = (Path("~/.local/bin/uv"), Path("/opt/homebrew/bin/uv"), Path("/usr/local/bin/uv"))
 
@@ -24,16 +27,11 @@ _UV_CANDIDATES = (Path("~/.local/bin/uv"), Path("/opt/homebrew/bin/uv"), Path("/
 class ServicePaths:
     """Machine-specific values substituted into the LaunchAgent template."""
 
-    checkout: Path
-    manifest: Path
+    garage_bin: Path
+    projects_file: Path
     data_dir: Path
     port: int
     home: Path
-
-    @property
-    def garage_bin(self) -> Path:
-        """Return the checkout's Garage executable, installed by `uv sync`."""
-        return self.checkout / ".venv" / "bin" / "garage"
 
     @property
     def log_dir(self) -> Path:
@@ -61,31 +59,21 @@ class ServicePaths:
         return ":".join(dict.fromkeys(entries))
 
 
-def default_checkout() -> Path:
-    """Return the git checkout this Garage runs from, falling back to the working directory."""
-    candidate = Path(__file__).resolve().parents[2]
-    if (candidate / ".git").exists() and (candidate / "pyproject.toml").is_file():
-        return candidate
-    return Path.cwd().resolve()
-
-
 def resolve_paths(
-    checkout: Path | None = None,
-    manifest: Path | None = None,
+    garage_bin: Path | None = None,
+    projects_file: Path | None = None,
     data_dir: Path | None = None,
     port: int = DEFAULT_PORT,
     home: Path | None = None,
 ) -> ServicePaths:
     """Resolve absolute paths for the LaunchAgent."""
-    root = (checkout or default_checkout()).expanduser().resolve()
-    if not (root / "pyproject.toml").is_file():
-        raise FileNotFoundError(f"{root} is not a Garage checkout (no pyproject.toml)")
+    resolved_home = (home or Path.home()).expanduser().resolve()
     return ServicePaths(
-        checkout=root,
-        manifest=(manifest or root / "garage.toml").expanduser().resolve(),
-        data_dir=(data_dir or DEFAULT_DATA_DIR).expanduser().resolve(),
+        garage_bin=(garage_bin or Path(sys.executable).parent / "garage").expanduser().resolve(),
+        projects_file=(projects_file or resolved_home / ".garage" / "projects.toml").expanduser().resolve(),
+        data_dir=(data_dir or resolved_home / ".garage").expanduser().resolve(),
         port=port,
-        home=(home or Path.home()).resolve(),
+        home=resolved_home,
     )
 
 
@@ -95,8 +83,7 @@ def render_plist(paths: ServicePaths) -> str:
     values = {
         "label": LABEL,
         "garage_bin": str(paths.garage_bin),
-        "manifest": str(paths.manifest),
-        "checkout": str(paths.checkout),
+        "projects_file": str(paths.projects_file),
         "path": paths.path,
         "home": str(paths.home),
         "data_dir": str(paths.data_dir),
@@ -137,11 +124,16 @@ def install(paths: ServicePaths, *, dry_run: bool = False) -> None:
         print(f"# {paths.plist_path}\n{content}", end="")
         return
     _require_macos()
-    for required in (paths.garage_bin, paths.manifest):
-        if not required.is_file():
-            raise FileNotFoundError(f"{required} not found; run `uv sync` in {paths.checkout} first")
-    if not (paths.checkout / ".env").is_file():
-        print(f"warning: {paths.checkout / '.env'} not found; Garage will run without keys", file=sys.stderr)
+    if not paths.garage_bin.is_file():
+        raise FileNotFoundError(f"{paths.garage_bin} not found; run install.sh; see README")
+    if not paths.projects_file.is_file():
+        raise FileNotFoundError(
+            f"{paths.projects_file} not found; create the projects file or run install.sh; see README"
+        )
+    env_file = paths.home / ".garage" / ".env"
+    if not env_file.is_file():
+        print(f"warning: {env_file} not found; Garage will run without credentials", file=sys.stderr)
+    paths.data_dir.mkdir(parents=True, exist_ok=True)
     paths.log_dir.mkdir(parents=True, exist_ok=True)
     paths.plist_path.parent.mkdir(parents=True, exist_ok=True)
     paths.plist_path.write_text(content, encoding="utf-8")
@@ -171,7 +163,7 @@ def status() -> int:
 
 
 def restart() -> None:
-    """Kill and relaunch the agent so it runs the checkout's current code."""
+    """Restart the installed LaunchAgent."""
     _require_macos()
     _checked(["launchctl", "kickstart", "-k", _target()])
     print(f"restarted {LABEL}")
@@ -188,22 +180,12 @@ def find_uv() -> str:
     raise FileNotFoundError("uv not found; install uv first")
 
 
-def update(checkout: Path, *, restart_service: bool = True) -> None:
-    """Fast-forward the running checkout, sync its environment, and restart the agent."""
-    if _checked(["git", "status", "--porcelain", "--untracked-files=no"], checkout):
-        raise RuntimeError(f"{checkout} has local changes; the running checkout must stay clean")
-    branch = _checked(["git", "rev-parse", "--abbrev-ref", "HEAD"], checkout)
-    before = _checked(["git", "rev-parse", "HEAD"], checkout)
-    _checked(["git", "pull", "--ff-only"], checkout)
-    after = _checked(["git", "rev-parse", "HEAD"], checkout)
-    if before == after:
-        print(f"{checkout} ({branch}) is already up to date; not restarting")
-        return
-    print(f"{checkout} ({branch}): {before[:7]} -> {after[:7]}")
-    _checked([find_uv(), "sync", "--locked"], checkout)
+def update(source: str, ref: str, *, restart_service: bool = True) -> None:
+    """Reinstall the Garage tool from its source and optionally restart its agent."""
+    _checked([find_uv(), "tool", "install", "--reinstall", f"{source}@{ref}"])
     if not restart_service:
         print("not restarting; restart Garage to run the new code")
-    elif platform.system() == "Darwin" and resolve_paths(checkout).plist_path.is_file():
+    elif platform.system() == "Darwin" and resolve_paths().plist_path.is_file():
         restart()
     else:
         print(f"{LABEL} is not installed here; restart Garage yourself")

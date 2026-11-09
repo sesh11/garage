@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "ProjectInfo": {
+      "description": "A project Garage serves: today exactly one primary repository.",
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "base_branch": {
+          "title": "Base Branch",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "repos": {
+          "items": {
+            "$ref": "#/$defs/RepoRef"
+          },
+          "title": "Repos",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "repos",
+        "agent",
+        "base_branch"
+      ],
+      "title": "ProjectInfo",
+      "type": "object"
+    },
+    "RepoRef": {
+      "description": "A repository attached to an item.",
+      "properties": {
+        "full_name": {
+          "title": "Full Name",
+          "type": "string"
+        },
+        "role": {
+          "default": "primary",
+          "enum": [
+            "primary",
+            "also"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "full_name"
+      ],
+      "title": "RepoRef",
+      "type": "object"
+    }
+  },
+  "description": "The projects this Garage serves.",
+  "properties": {
+    "projects": {
+      "items": {
+        "$ref": "#/$defs/ProjectInfo"
+      },
+      "title": "Projects",
+      "type": "array"
+    }
+  },
+  "required": [
+    "projects"
+  ],
+  "title": "ProjectList",
+  "type": "object"
+}

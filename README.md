@@ -26,11 +26,12 @@ PR means pull request: a proposed code change for a human to review.
 **Built:** a scrubbed event SDK (software development kit), rule-based incidents, GitHub reporting with daily
 creation caps and deduplication by fingerprint (a stable identifier for a rule and its event group),
 manifest-driven dispatch with a duplicate ledger (a local record of started sessions) and a per-session
-ACU (Agent Compute Unit) limit, a local incidents UI, and a loopback request bridge for local clients.
+ACU (Agent Compute Unit) limit, a local incidents UI, a loopback request bridge for local clients, and
+[projects](#projects): one `garage serve` can work several repositories, tagging every item and run with its project.
 A manifest is the app's `garage.toml` configuration file.
 
-**Not yet:** triage and plan approval, release/deploy and confirmation, a test runner, multi-repository onboarding
-and GitHub sign-in, hosted deployment, or hosted CI (continuous integration). Local checks exist.
+**Not yet:** triage and plan approval, release/deploy and confirmation, a test runner, GitHub sign-in and
+automatic routing of asks to a project, hosted deployment, or hosted CI (continuous integration). Local checks exist.
 Test-kit commands currently become prompt instructions, not tests Garage executes.
 See [implemented versus future work](docs/implemented-vs-future.md).
 
@@ -119,7 +120,9 @@ The example's robot test is instructions for an agent on a hardware machine, not
 
 ## Configuration
 
-The CLI loads `.env`. Manifest selection is `--manifest`, then `GARAGE_MANIFEST`, then `./garage.toml`.
+The CLI loads `.env`. Selection is `--projects` (a [projects file](#projects)), then `--manifest`, then
+`GARAGE_PROJECTS`, then `GARAGE_MANIFEST`, then `./garage.toml`. A single manifest works exactly as before: it is a
+one-project setup named after its `[app].id`.
 
 `GARAGE_MANIFEST` selects the default manifest. `GARAGE_REPO`, `GARAGE_EVENTS_DIR`, and `GARAGE_DATA_DIR` override
 the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_REPORT` and `GARAGE_DISPATCH`;
@@ -138,13 +141,69 @@ Reporting and dispatch default off in the server. Live dispatch requires its ena
 live one-shot reporting requires a GitHub token, not `GARAGE_REPORT`.
 Keep credentials private; never put them in events, issues, manifests, or commits.
 
+## Projects
+
+A project is one thing Garage works on: today, one GitHub repository plus how to work on it. A projects file lists
+them with repeated `[[project]]` tables; see [examples/projects.toml](examples/projects.toml), which defines `garage`
+and `ambient-home`:
+
+```toml
+[[project]]
+name = "garage"                 # lowercase letters, digits, ".", "_" or "-"
+repo = "sesh11/garage"
+path = "~/code/garage"          # local checkout; its garage.toml is used if present
+agent = "claude-code"           # devin, claude-code, or codex
+base_branch = "main"
+check = ["uv run pytest -q"]    # commands the agent is told to run before opening a PR
+prompt_rules = ["Keep packages/garage-sdk/src changes additive."]
+
+[[project]]
+name = "ambient-home"
+manifest = "~/code/ambient-home/garage.toml"   # signals, rules, and dispatch settings
+path = "~/code/ambient-home"
+```
+
+Each entry may point at a `manifest`; otherwise Garage reads `<path>/garage.toml` if it exists, or builds a minimal
+manifest from the entry. Fields in the entry override the manifest. Names and repositories must be unique.
+Relative paths are resolved from the projects file's folder.
+
+```sh
+export GARAGE_PROJECTS=~/code/garage/examples/projects.toml   # or pass --projects FILE to a command
+garage projects                              # list projects
+garage serve                                 # one server for every project
+garage items --project garage                # filter the inbox; --unassigned shows items with no project
+garage assign ITEM_ID garage                 # give a needs_repo item a project (files it if reporting is on)
+garage report --offline --project ambient-home
+garage dispatch --dry-run --offline --project garage
+garage client add voice --kind app --default-project ambient-home
+```
+
+One `garage serve` monitors each project that has `[signals].path`, files its incidents and requests to that
+project's repository, and dispatches its ready issues with that project's agent, base branch, checks, and rules.
+Projects without signals still accept asks. Every inbox item and dispatch record stores its project; dispatched
+sessions are tagged `project:<name>`. The dashboard's Project menu filters incidents and the inbox, and
+`?project=<name>` links to one project.
+
+An ask names its project with `"project": "garage"`, or with a `repo` that belongs to a project, or through the
+client's default project. Garage never guesses: an ask with no project waits in `needs_repo`, and one naming an
+unknown project or repository is rejected (`422`) on `/v1/items` and not filed on `/api/requests`.
+
+In projects mode each project keeps its own dispatch ledger at `GARAGE_DATA_DIR/projects/<name>/dispatch.json`;
+the single-manifest setup keeps `GARAGE_DATA_DIR/dispatch.json`. When switching an existing install to a projects
+file, move that file into the project's folder so started sessions are not repeated. `GARAGE_REPO` and
+`GARAGE_EVENTS_DIR` apply only to the single-manifest setup. Opening the inbox database upgrades it in place and
+tags existing items with the project whose repository they name.
+
+A project has one repository today. API responses list `repos` so a project spanning several repositories
+(for example ambient-home plus ambient-devices) can be added later without changing clients.
+
 ## Request bridge
 
 Bridge calls require a loopback client address, including status GETs; the optional bearer token also protects them.
 If `GARAGE_BRIDGE_TOKEN` is set, send `Authorization: Bearer <token>`. This is not hosted authentication.
 Submit an ID, request text, timezone-aware `created_at`, and a matching `repository` to `POST /api/requests`.
-Duplicate IDs return the existing issue; disabled reporting, a non-target repository, or a daily cap returns
-`{"issue": null}`. Titles start with `Request: `.
+An optional `project` picks the project; otherwise the repository does. Duplicate IDs return the existing issue;
+disabled reporting, a repository or project Garage doesn't serve, or a daily cap returns `{"issue": null}`. Titles start with `Request: `.
 
 Bridge POSTs require a loopback `Host` (`127.0.0.1`, `localhost`, or `[::1]`, with any port). If `Origin` is present,
 it must match that host using `http`; `Sec-Fetch-Site`, if present, must be `same-origin` or `none`. Calls must come
@@ -199,75 +258,68 @@ Local settings: `GARAGE_DATA_DIR` (default `~/.garage`), `GARAGE_LOCAL_TIMEOUT` 
 arbitrary commands as your user. A worktree isolates git changes, not filesystem access or secrets. Use trusted
 tasks/repositories. Cloud execution and live question relays are deferred.
 
-## Garage building Garage (macOS)
+## Running Garage on your Mac
 
-Garage can work on its own repository. Three pieces make that possible:
+Garage serves every project in one always-on process on port `8770`. A **LaunchAgent** is macOS's way to start a
+program in the background when you log in and restart it if it stops. A **uv tool** is a command-line program
+installed separately from a development checkout. A **worktree** is another working folder for a Git branch; it
+shares the repository's history without changing your main checkout.
 
-- **[garage.toml](garage.toml)** at the repository root is Garage's own manifest. It lives at the root, not in
-  `examples/`, because it is this repo's real config: `garage` finds `./garage.toml` by default, and the manifest
-  directory is the git checkout. It lists the checks agents must pass (`ruff check`, `ruff format --check`, `mypy`,
-  `pytest`) and the push and public-repo rules. Garage does not record events about itself yet, so `[signals]` and
-  `[detect]` are empty and incident detection is off; `garage serve` still runs the UI, inbox, request bridge and
-  dispatch. `garage report` needs a signal source, so it errors with this manifest.
-- **A LaunchAgent** (macOS's way of keeping a program running in the background and restarting it if it crashes),
-  installed with `garage service install`.
-- **`garage update`**, because a running Garage does not update itself after you merge a Garage PR.
+There are three places to know about:
 
-The manifest uses `agent = "devin"`: each fix runs on a cloud VM, so no agent ever touches the Mac checkout that runs
-Garage. To use a local CLI instead, set `agent = "claude-code"` or `"codex"` and set `GARAGE_LOCAL_REPO_PATH` to a
-second clone (not the running checkout); local worktrees go in `GARAGE_DATA_DIR/worktrees`.
+1. Your development clone, usually `~/dev/garage`, where you edit Garage.
+2. The installed Garage tool, which runs in the background using `~/.garage/projects.toml` and
+   `~/.garage/.env`. The projects file is the one place to add Garage and any other projects; see
+   [Projects](#projects) for its format.
+3. Temporary PR test folders under `~/dev/garage-test/pr-N`, created by `scripts/try-pr.sh` in the development
+   clone. They do not replace the installed service.
 
-### Install
+This replaces any Garage you already run on port `8770`; stop the old instance before installing this one.
 
-Use a dedicated clone that neither you nor agents edit:
+### Install and manage the service
+
+Once this change is on `main`, install the tool and create its starter projects file with:
 
 ```sh
-git clone https://github.com/sesh11/garage.git ~/dev/garage/garage-live
-cd ~/dev/garage/garage-live
-uv sync --locked
+curl -fsSL https://raw.githubusercontent.com/sesh11/garage/main/install.sh | bash
 ```
 
-Create `~/dev/garage/garage-live/.env` (git ignores it; never commit or print it):
+Or, from a development clone, run `bash install.sh`. The script updates the installed tool each time, creates
+`~/.garage/projects.toml` and a private `~/.garage/.env` only if they are missing, then installs or replaces the
+LaunchAgent on macOS. Edit the paths in `~/.garage/projects.toml` for your machine. Reporting and dispatch are off
+until enabled in `.env`; keep credentials private and never put them in a projects file, issue, PR, or log.
 
 ```sh
-GARAGE_DISPATCH=1
-GARAGE_GITHUB_TOKEN=...   # can label and comment on sesh11/garage issues
-DEVIN_API_KEY=...
-DEVIN_ORG_ID=...
-# GARAGE_REPORT=1         # also file request-bridge requests as issues
-```
-
-Then preview and install the LaunchAgent:
-
-```sh
-.venv/bin/garage service install --dry-run   # prints ~/Library/LaunchAgents/ai.garage.serve.plist
-.venv/bin/garage service install
-.venv/bin/garage service status
+garage service status
+garage service restart
 tail -f ~/Library/Logs/garage/serve.log
+garage update
 ```
 
-The agent runs `.venv/bin/garage serve --manifest garage.toml` from the checkout with `PYTHONPATH` and `PYTHONHOME`
-removed, so a hub environment cannot make Garage import an older `garage_sdk`. It sets `GARAGE_PORT=8771` and
-`GARAGE_DATA_DIR=~/.garage/garage` so it can run beside a Garage for another app on 8770 with `~/.garage`
-(the dispatch ledger is keyed by issue number, so two repositories must not share a data directory). Override with
-`--port`, `--data-dir`, `--manifest` or `--checkout`; values the plist sets win over `.env`.
+To dispatch a Garage issue, add the `factory:ready-for-fix` label. Garage checks on start and then at the configured
+dispatch interval. After merging changes to Garage, run `garage update` to reinstall from the configured source and
+restart the LaunchAgent. `GARAGE_INSTALL_SOURCE` and `GARAGE_INSTALL_REF` select the update source and ref; they
+default to the public Garage repository and `main`.
 
-To put Garage to work, add the `factory:ready-for-fix` label to an issue in `sesh11/garage`. Garage checks on start
-and then every `[dispatch].interval` (1 hour); `garage service restart` checks right away.
-
-### Update after merging
+From your development clone, validate a PR in an isolated worktree and start a test server on port `8772`:
 
 ```sh
-env -u PYTHONPATH ~/dev/garage/garage-live/.venv/bin/garage update
+scripts/try-pr.sh 123
 ```
 
-`garage update` refuses if the checkout has local changes, runs `git pull --ff-only`, then `uv sync --locked`, then
-restarts the LaunchAgent (`launchctl kickstart -k`). If nothing changed it does nothing. `--no-restart` skips the
-restart. Manual equivalent:
+The script runs sync, lint, formatting, type checks and tests before starting the server. It prints the URL, PID and
+log path. Use `GARAGE_TRY_PORT` to choose another port, or `GARAGE_TRY_DIR` to choose another parent folder. Stop
+the printed process when done, then remove the test worktree and local branch with:
 
 ```sh
-cd ~/dev/garage/garage-live && git pull --ff-only && uv sync --locked
-launchctl kickstart -k gui/$(id -u)/ai.garage.serve
+scripts/try-pr.sh 123 --clean
+```
+
+To uninstall the LaunchAgent and tool:
+
+```sh
+garage service uninstall
+uv tool uninstall garage
 ```
 
 Remove the LaunchAgent with `garage service uninstall` (logs and data stay).

@@ -196,6 +196,18 @@
     "kind": {
       "$ref": "#/$defs/ItemKind"
     },
+    "project": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Project"
+    },
     "repos": {
       "items": {
         "$ref": "#/$defs/RepoRef"
