@@ -234,8 +234,8 @@ With that token in `GARAGE_CLIENT_TOKEN`:
 ```sh
 curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" -H 'Content-Type: application/json' \
   -d '{"id":"example-1","text":"Improve the settings page","repo":"owner/repo"}' \
-  http://localhost:8765/v1/items
-curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" http://localhost:8765/v1/items
+  http://localhost:8770/v1/items
+curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" http://localhost:8770/v1/items
 garage items --json
 garage client remove me
 ```
