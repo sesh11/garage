@@ -233,6 +233,8 @@ async def test_two_projects_file_tag_and_filter_items(tmp_path) -> None:
         assert unknown.status_code == 422
         mismatch = await client.post("/v1/items", json={"id": "x2", "text": "?", "project": "garage", "repo": "o/r"})
         assert mismatch.status_code == 422
+        stray = await client.post("/v1/items", json={"id": "x3", "text": "?", "repo": "someone/else"})
+        assert (stray.status_code, stray.json()["error"]) == (422, "repo someone/else is not in any project")
 
         waiting = (await client.post("/v1/items", json={"id": "w1", "text": "Which repo?"})).json()
         assert (waiting["project"], waiting["state"]) == (None, "needs_repo")
