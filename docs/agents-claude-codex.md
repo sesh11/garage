@@ -218,7 +218,7 @@ Links: [headless](https://code.claude.com/docs/en/headless), [CLI reference](htt
 [pricing](https://platform.claude.com/docs/en/about-claude/pricing).
 
 **Claude Code as an MCP client** (to call Garage's MCP server): yes, `claude mcp add --transport http garage
-http://127.0.0.1:8765/mcp`, or `--mcp-config` in headless runs [docs]. A cloud session can't reach a server on the
+http://127.0.0.1:8770/mcp`, or `--mcp-config` in headless runs [docs]. A cloud session can't reach a server on the
 Mac's loopback address [inferred].
 
 ## 3. Ways to hand work to Codex
@@ -246,7 +246,7 @@ Links: [non-interactive mode](https://developers.openai.com/codex/non-interactiv
 [MCP](https://developers.openai.com/codex/extend/mcp), [IDE](https://developers.openai.com/codex/ide),
 [Work Cloud local access](https://developers.openai.com/codex/enterprise/cloud-local-access).
 
-**Codex as an MCP client**: yes, `[mcp_servers.garage] url = "http://127.0.0.1:8765/mcp"` in `config.toml` [docs].
+**Codex as an MCP client**: yes, `[mcp_servers.garage] url = "http://127.0.0.1:8770/mcp"` in `config.toml` [docs].
 Its tool calls show up as items in the event stream [docs]. A cloud task can't reach the Mac's loopback [inferred].
 
 ### The short version

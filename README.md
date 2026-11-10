@@ -186,7 +186,8 @@ sessions are tagged `project:<name>`. The dashboard's Project menu filters incid
 
 An ask names its project with `"project": "garage"`, or with a `repo` that belongs to a project, or through the
 client's default project. Garage never guesses: an ask with no project waits in `needs_repo`, and one naming an
-unknown project or repository is rejected (`422`) on `/v1/items` and not filed on `/api/requests`.
+unknown project or repository is rejected (`422`) on `/v1/items`. The older `/api/requests` path files nothing for
+an unknown repository and keeps the ask in `needs_repo` instead.
 
 In projects mode each project keeps its own dispatch ledger at `GARAGE_DATA_DIR/projects/<name>/dispatch.json`;
 the single-manifest setup keeps `GARAGE_DATA_DIR/dispatch.json`. When switching an existing install to a projects
@@ -358,8 +359,8 @@ With that token in `GARAGE_CLIENT_TOKEN`:
 ```sh
 curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" -H 'Content-Type: application/json' \
   -d '{"id":"example-1","text":"Improve the settings page","repo":"owner/repo"}' \
-  http://localhost:8765/v1/items
-curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" http://localhost:8765/v1/items
+  http://localhost:8770/v1/items
+curl -H "Authorization: Bearer $GARAGE_CLIENT_TOKEN" http://localhost:8770/v1/items
 garage items --json
 garage client remove me
 ```
