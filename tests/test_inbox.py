@@ -47,7 +47,7 @@ def test_store(tmp_path: Path) -> None:
     assert token not in str(store.clients())
     with store.connection() as db:
         assert token not in str([tuple(row) for row in db.execute("SELECT * FROM clients")])
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     work = SubmitWork(id="one", text="hello", repo="https://github.com/Owner/Repo/")
     assert work.repo == "owner/repo"

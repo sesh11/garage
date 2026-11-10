@@ -1,0 +1,31 @@
+# One Garage, several projects. Start everything with:
+#   garage serve --projects examples/projects.toml      (or set GARAGE_PROJECTS to this file)
+#
+# Each [[project]] is one repository plus how to work on it. A project can point at a manifest
+# (a garage.toml with signals, detection rules, report text...). If it doesn't, Garage looks for
+# garage.toml inside `path`, and otherwise uses defaults. Fields set here win over the manifest.
+# Relative paths are relative to this file. Reporting and dispatch stay off unless GARAGE_REPORT=1 /
+# GARAGE_DISPATCH=1 are set, exactly as with a single manifest.
+
+[[project]]
+name = "garage"
+repo = "sesh11/garage"
+path = "~/code/garage"            # your local checkout; local agents work in a git worktree of it
+agent = "devin"                   # devin, claude-code or codex
+base_branch = "main"
+check = [
+  "uv run ruff check .",
+  "uv run ruff format --check .",
+  "uv run mypy",
+  "uv run pytest -q",
+  "uv run pre-commit run --all-files",
+]
+prompt_rules = [
+  "Keep changes to packages/garage-sdk/src additive: ambient-home pins garage-sdk.",
+  "If pushing to origin fails with 403, push with `env -u GH_TOKEN git push https://github.com/{repo}.git <branch>`.",
+]
+
+[[project]]
+name = "ambient-home"
+manifest = "ambient-home/garage.toml"   # signals, detection rules, test kit and prompt rules live here
+path = "~/code/ambient-home"

@@ -26,11 +26,12 @@ PR means pull request: a proposed code change for a human to review.
 **Built:** a scrubbed event SDK (software development kit), rule-based incidents, GitHub reporting with daily
 creation caps and deduplication by fingerprint (a stable identifier for a rule and its event group),
 manifest-driven dispatch with a duplicate ledger (a local record of started sessions) and a per-session
-ACU (Agent Compute Unit) limit, a local incidents UI, and a loopback request bridge for local clients.
+ACU (Agent Compute Unit) limit, a local incidents UI, a loopback request bridge for local clients, and
+[projects](#projects): one `garage serve` can work several repositories, tagging every item and run with its project.
 A manifest is the app's `garage.toml` configuration file.
 
-**Not yet:** triage and plan approval, release/deploy and confirmation, a test runner, multi-repository onboarding
-and GitHub sign-in, hosted deployment, or hosted CI (continuous integration). Local checks exist.
+**Not yet:** triage and plan approval, release/deploy and confirmation, a test runner, GitHub sign-in and
+automatic routing of asks to a project, hosted deployment, or hosted CI (continuous integration). Local checks exist.
 Test-kit commands currently become prompt instructions, not tests Garage executes.
 See [implemented versus future work](docs/implemented-vs-future.md).
 
@@ -119,7 +120,9 @@ The example's robot test is instructions for an agent on a hardware machine, not
 
 ## Configuration
 
-The CLI loads `.env`. Manifest selection is `--manifest`, then `GARAGE_MANIFEST`, then `./garage.toml`.
+The CLI loads `.env`. Selection is `--projects` (a [projects file](#projects)), then `--manifest`, then
+`GARAGE_PROJECTS`, then `GARAGE_MANIFEST`, then `./garage.toml`. A single manifest works exactly as before: it is a
+one-project setup named after its `[app].id`.
 
 `GARAGE_MANIFEST` selects the default manifest. `GARAGE_REPO`, `GARAGE_EVENTS_DIR`, and `GARAGE_DATA_DIR` override
 the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_REPORT` and `GARAGE_DISPATCH`;
@@ -138,13 +141,70 @@ Reporting and dispatch default off in the server. Live dispatch requires its ena
 live one-shot reporting requires a GitHub token, not `GARAGE_REPORT`.
 Keep credentials private; never put them in events, issues, manifests, or commits.
 
+## Projects
+
+A project is one thing Garage works on: today, one GitHub repository plus how to work on it. A projects file lists
+them with repeated `[[project]]` tables; see [examples/projects.toml](examples/projects.toml), which defines `garage`
+and `ambient-home`:
+
+```toml
+[[project]]
+name = "garage"                 # lowercase letters, digits, ".", "_" or "-"
+repo = "sesh11/garage"
+path = "~/code/garage"          # local checkout; its garage.toml is used if present
+agent = "claude-code"           # devin, claude-code, or codex
+base_branch = "main"
+check = ["uv run pytest -q"]    # commands the agent is told to run before opening a PR
+prompt_rules = ["Keep packages/garage-sdk/src changes additive."]
+
+[[project]]
+name = "ambient-home"
+manifest = "~/code/ambient-home/garage.toml"   # signals, rules, and dispatch settings
+path = "~/code/ambient-home"
+```
+
+Each entry may point at a `manifest`; otherwise Garage reads `<path>/garage.toml` if it exists, or builds a minimal
+manifest from the entry. Fields in the entry override the manifest. Names and repositories must be unique.
+Relative paths are resolved from the projects file's folder.
+
+```sh
+export GARAGE_PROJECTS=~/code/garage/examples/projects.toml   # or pass --projects FILE to a command
+garage projects                              # list projects
+garage serve                                 # one server for every project
+garage items --project garage                # filter the inbox; --unassigned shows items with no project
+garage assign ITEM_ID garage                 # give a needs_repo item a project (files it if reporting is on)
+garage report --offline --project ambient-home
+garage dispatch --dry-run --offline --project garage
+garage client add voice --kind app --default-project ambient-home
+```
+
+One `garage serve` monitors each project that has `[signals].path`, files its incidents and requests to that
+project's repository, and dispatches its ready issues with that project's agent, base branch, checks, and rules.
+Projects without signals still accept asks. Every inbox item and dispatch record stores its project; dispatched
+sessions are tagged `project:<name>`. The dashboard's Project menu filters incidents and the inbox, and
+`?project=<name>` links to one project.
+
+An ask names its project with `"project": "garage"`, or with a `repo` that belongs to a project, or through the
+client's default project. Garage never guesses: an ask with no project waits in `needs_repo`, and one naming an
+unknown project or repository is rejected (`422`) on `/v1/items`. The older `/api/requests` path files nothing for
+an unknown repository and keeps the ask in `needs_repo` instead.
+
+In projects mode each project keeps its own dispatch ledger at `GARAGE_DATA_DIR/projects/<name>/dispatch.json`;
+the single-manifest setup keeps `GARAGE_DATA_DIR/dispatch.json`. When switching an existing install to a projects
+file, move that file into the project's folder so started sessions are not repeated. `GARAGE_REPO` and
+`GARAGE_EVENTS_DIR` apply only to the single-manifest setup. Opening the inbox database upgrades it in place and
+tags existing items with the project whose repository they name.
+
+A project has one repository today. API responses list `repos` so a project spanning several repositories
+(for example ambient-home plus ambient-devices) can be added later without changing clients.
+
 ## Request bridge
 
 Bridge calls require a loopback client address, including status GETs; the optional bearer token also protects them.
 If `GARAGE_BRIDGE_TOKEN` is set, send `Authorization: Bearer <token>`. This is not hosted authentication.
 Submit an ID, request text, timezone-aware `created_at`, and a matching `repository` to `POST /api/requests`.
-Duplicate IDs return the existing issue; disabled reporting, a non-target repository, or a daily cap returns
-`{"issue": null}`. Titles start with `Request: `.
+An optional `project` picks the project; otherwise the repository does. Duplicate IDs return the existing issue;
+disabled reporting, a repository or project Garage doesn't serve, or a daily cap returns `{"issue": null}`. Titles start with `Request: `.
 
 Bridge POSTs require a loopback `Host` (`127.0.0.1`, `localhost`, or `[::1]`, with any port). If `Origin` is present,
 it must match that host using `http`; `Sec-Fetch-Site`, if present, must be `same-origin` or `none`. Calls must come

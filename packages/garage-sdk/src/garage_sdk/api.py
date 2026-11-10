@@ -48,6 +48,17 @@ def normalize_repo(value: str) -> str:
     return value.lower()
 
 
+PROJECT_PATTERN = r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$"
+
+
+def normalize_project(value: str) -> str:
+    """Validate and normalize a project name such as ``garage`` or ``ambient-home``."""
+    value = value.strip().lower()
+    if not re.fullmatch(PROJECT_PATTERN, value):
+        raise ValueError("project names use lowercase letters, digits, '.', '_' or '-'")
+    return value
+
+
 class Source(BaseModel):
     """Optional caller-supplied provenance."""
 
@@ -94,6 +105,7 @@ class SubmitWork(BaseModel):
     kind: ItemKind = ItemKind.ask
     text: str = Field(min_length=1, max_length=4000)
     repo: str | None = None
+    project: str | None = None
     created_at: AwareDatetime | None = None
     source: Source | None = None
     context: dict[str, JsonValue] = Field(default_factory=dict)
@@ -112,6 +124,12 @@ class SubmitWork(BaseModel):
         """Normalize optional repository input."""
         return normalize_repo(value) if value is not None else None
 
+    @field_validator("project")
+    @classmethod
+    def project_name(cls, value: str | None) -> str | None:
+        """Normalize an optional project name."""
+        return normalize_project(value) if value is not None else None
+
 
 class InboxItem(BaseModel):
     """Garage's durable record of one submission."""
@@ -123,6 +141,7 @@ class InboxItem(BaseModel):
     kind: ItemKind
     text: str
     state: ItemState
+    project: str | None = None
     repos: list[RepoRef] = Field(default_factory=list)
     source: Source | None = None
     context: dict[str, JsonValue] = Field(default_factory=dict)
@@ -139,6 +158,34 @@ class ItemList(BaseModel):
     next_cursor: str | None = None
 
 
+class ProjectInfo(BaseModel):
+    """A project Garage serves: today exactly one primary repository."""
+
+    name: str
+    repos: list[RepoRef]
+    agent: str
+    base_branch: str
+
+
+class ProjectList(BaseModel):
+    """The projects this Garage serves."""
+
+    projects: list[ProjectInfo]
+
+
+class AssignProject(BaseModel):
+    """Move an item to a project, for example out of ``needs_repo``."""
+
+    model_config = ConfigDict(extra="forbid")
+    project: str
+
+    @field_validator("project")
+    @classmethod
+    def project_name(cls, value: str) -> str:
+        """Normalize the project name."""
+        return normalize_project(value)
+
+
 class ApiError(BaseModel):
     """An API error."""
 
@@ -149,5 +196,17 @@ def json_schemas() -> dict[str, dict[str, object]]:
     """Return the public model schemas for non-Python clients."""
     return {
         model.__name__: model.model_json_schema()
-        for model in (Source, RepoRef, IssueLink, RunLink, SubmitWork, InboxItem, ItemList, ApiError)
+        for model in (
+            Source,
+            RepoRef,
+            IssueLink,
+            RunLink,
+            SubmitWork,
+            InboxItem,
+            ItemList,
+            ProjectInfo,
+            ProjectList,
+            AssignProject,
+            ApiError,
+        )
     }

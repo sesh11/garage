@@ -66,6 +66,8 @@ def test_prompt_uses_configured_base_branch() -> None:
 
     assert "Branch off the latest feature/x and open ONE pull request into feature/x" in prompt
     assert "Never merge, never push directly to feature/x or main, never deploy." in prompt
+    default = build_fix_prompt(issue_record(42), "sesh11/ambient-home", settings.manifest)
+    assert "Never merge, never push directly to main, never deploy." in default
 
 
 @pytest.mark.asyncio

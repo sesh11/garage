@@ -12,11 +12,20 @@
   manifest-driven coding-agent dispatch, a local incidents UI, and an opt-in loopback request bridge.
 - Reporting, dispatch, and bridge authentication are disabled unless configured. The example ambient-home manifest
   keeps its app-specific rules and prompt instructions outside generic Garage modules.
+- Projects: a `[[project]]` projects file (name, repo, checkout path, agent, base branch, check commands, prompt
+  rules, optional manifest). One `garage serve` monitors, reports, and dispatches for every project; inbox items,
+  dispatch records, local agent runs, and session tags carry the project. The CLI (`projects`, `items --project`,
+  `assign`, `--project` on `report`/`dispatch`) and dashboard filter by project. A single manifest is a one-project
+  setup.
 - Root Ruff, mypy, and pytest checks cover the service and SDK.
 
 ## Not implemented yet
 
-- GitHub sign-in (GitHub App/OAuth) and choosing repositories; Garage currently works one repository from its manifest.
+- GitHub sign-in (GitHub App/OAuth) and a repository catalog; projects are listed by hand in a projects file.
+- Automatic routing: Garage does not guess an ask's project. Asks with no project wait in `needs_repo` until
+  `garage assign` (or `POST /v1/items/{id}/project`) names one.
+- Projects spanning several repositories. Each project has one repository; the API's `repos` list leaves room.
+- Approval before dispatch: ready issues in any project still dispatch when dispatch is enabled.
 - There is no triage, plan, release, or confirm workflow. `policy.auto_accept` is parsed but ignored.
 - Test kits only add text to the dispatch prompt; there is no test runner.
 - The robot kit now targets `ambient-reachy-hw-test` from ambient-devices against an isolated core worktree. It is prompt

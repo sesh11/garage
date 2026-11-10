@@ -217,6 +217,7 @@ class LocalAgent:
                 "branch": branch,
                 "worktree": str(worktree),
                 "title": title,
+                "project": next((tag.removeprefix("project:") for tag in tags if tag.startswith("project:")), None),
                 "command": command,
                 "started_at": time.time(),
                 "timeout_s": self.timeout_s,

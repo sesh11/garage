@@ -3,6 +3,8 @@
 from pathlib import Path
 from datetime import datetime, timezone
 
+import pytest
+
 from garage.tracker import IssueRecord
 from garage.agents.base import SessionState, SessionStatus, CreatedSession
 from garage.agents.devin import DevinClient
@@ -133,3 +135,8 @@ class FakeAgent:
 
 def example_manifest() -> Path:
     return Path(__file__).parents[1] / "examples" / "ambient-home" / "garage.toml"
+
+
+@pytest.fixture(autouse=True)
+def _no_projects_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GARAGE_PROJECTS", raising=False)

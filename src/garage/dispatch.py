@@ -16,6 +16,7 @@ from pydantic import Field, BaseModel
 from garage_sdk import emit, scrub_text
 from garage.report import READY, FIXING, LABELS, DISPATCHED
 from garage.tracker import Tracker, IssueRecord
+from garage_sdk.events import EventLevel
 from garage.agents.base import CodingAgent, SessionStatus
 from garage.agents.local import LocalCapacityError
 from garage_sdk.manifest import Manifest
@@ -44,6 +45,7 @@ class DispatchRecord(BaseModel):
     session_id: str
     session_url: str
     started_at: datetime
+    project: str | None = None
     labeled: bool = False
     done: bool = False
     status: str | None = None
@@ -98,6 +100,7 @@ def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
         body = body[:MAX_BODY_CHARS] + "\n[... truncated]"
     outpost = manifest.dispatch.outpost or ""
     base = manifest.dispatch.base_branch
+    protected = base if base == "main" else f"{base} or main"
     lines = [
         f"Fix GitHub issue #{issue.number} in {repo}: {scrub_text(issue.title)}",
         f"Issue: {issue.url}",
@@ -108,7 +111,7 @@ def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
         "",
         "Rules:",
         f"- Work only in {repo}. Branch off the latest {base} and open ONE pull request into {base} "
-        f"with 'Closes #{issue.number}' in its body. Never merge, never push directly to {base} or main, never deploy.",
+        f"with 'Closes #{issue.number}' in its body. Never merge, never push directly to {protected}, never deploy.",
     ]
     checks = manifest.build.check
     if checks:
@@ -186,8 +189,10 @@ class Dispatcher:
         dry_run: bool,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         legacy_ledger_path: Path | None = None,
+        project: str | None = None,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
+        self.project = project
         self.tracker = tracker
         self.agent = agent
         self.ledger_path = ledger_path
@@ -198,6 +203,11 @@ class Dispatcher:
         self.clock = clock
         self._labels_ready = False
         self._wake = asyncio.Event()
+
+    def _emit(self, type: str, component: str, level: EventLevel = "info", **data: object) -> None:
+        if self.project:
+            data["project"] = self.project
+        emit(type, component, level, **data)
 
     def poke(self) -> None:
         """Wake the dispatch loop to check for new ready issues."""
@@ -222,7 +232,7 @@ class Dispatcher:
                 raise
             except Exception as exc:
                 logger.exception("Garage dispatch failed")
-                emit("factory.dispatch_failed", "factory", "error", exc_type=type(exc).__name__, error=str(exc))
+                self._emit("factory.dispatch_failed", "factory", "error", exc_type=type(exc).__name__, error=str(exc))
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.interval_s)
             except TimeoutError:
@@ -273,25 +283,29 @@ class Dispatcher:
             created = await self.agent.create_session(
                 build_fix_prompt(issue, repo, self.manifest),
                 title=f"Fix #{issue.number}: {scrub_text(issue.title)}"[:80],
-                tags=["factory", "dispatch"],
+                tags=["factory", "dispatch", *([f"project:{self.project}"] if self.project else [])],
                 structured_output_schema=OUTPUT_SCHEMA,
                 repos=[repo],
             )
         except LocalCapacityError as exc:
             logger.warning("Deferred #%d: %s; will retry on the next poll", issue.number, exc)
-            emit("factory.dispatch_deferred", "factory", "warning", issue=issue.number, reason=str(exc))
+            self._emit("factory.dispatch_deferred", "factory", "warning", issue=issue.number, reason=str(exc))
             return f"deferred #{issue.number}: {exc}; will retry on the next poll"
         except Exception as exc:
             detail = _error_detail(exc)
             logger.error("Could not start a fix session for #%d: %s", issue.number, detail)
-            emit("factory.dispatch_failed", "factory", "error", issue=issue.number, error=detail)
+            self._emit("factory.dispatch_failed", "factory", "error", issue=issue.number, error=detail)
             return f"failed to start session for #{issue.number}: {detail}"
         record = DispatchRecord(
-            issue=issue.number, session_id=created.session_id, session_url=created.url, started_at=self.clock()
+            issue=issue.number,
+            session_id=created.session_id,
+            session_url=created.url,
+            started_at=self.clock(),
+            project=self.project,
         )
         ledger.records.append(record)
         self._save_ledger(ledger)
-        emit("factory.dispatched", "factory", issue=issue.number, session_id=created.session_id)
+        self._emit("factory.dispatched", "factory", issue=issue.number, session_id=created.session_id)
         await self._label(ledger, record)
         return f"started {created.url} for #{issue.number}: {issue.title}"
 
@@ -348,6 +362,8 @@ class Dispatcher:
             record.status = status.value
             record.pr_url = pr_url
             self._save_ledger(ledger)
-            emit("factory.dispatch_ended", "factory", issue=record.issue, status=status.value, has_pr=bool(pr_url))
+            self._emit(
+                "factory.dispatch_ended", "factory", issue=record.issue, status=status.value, has_pr=bool(pr_url)
+            )
             done.append(f"session for #{record.issue} ended ({status.value})")
         return done
