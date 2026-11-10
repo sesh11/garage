@@ -462,6 +462,8 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--kind", choices=["owner", "app", "agent"], required=True)
     add.add_argument("--default-repo")
     add.add_argument("--default-project", help="project used when a submission names neither project nor repo")
+    add.add_argument("--manifest", type=Path, default=argparse.SUPPRESS)
+    add.add_argument("--projects", type=Path, default=argparse.SUPPRESS, help=PROJECTS_HELP)
     clients.add_parser("list")
     remove = clients.add_parser("remove")
     remove.add_argument("name")

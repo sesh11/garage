@@ -186,7 +186,8 @@ sessions are tagged `project:<name>`. The dashboard's Project menu filters incid
 
 An ask names its project with `"project": "garage"`, or with a `repo` that belongs to a project, or through the
 client's default project. Garage never guesses: an ask with no project waits in `needs_repo`, and one naming an
-unknown project or repository is rejected (`422`) on `/v1/items` and not filed on `/api/requests`.
+unknown project or repository is rejected (`422`) on `/v1/items`. The older `/api/requests` path files nothing for
+an unknown repository and keeps the ask in `needs_repo` instead.
 
 In projects mode each project keeps its own dispatch ledger at `GARAGE_DATA_DIR/projects/<name>/dispatch.json`;
 the single-manifest setup keeps `GARAGE_DATA_DIR/dispatch.json`. When switching an existing install to a projects
