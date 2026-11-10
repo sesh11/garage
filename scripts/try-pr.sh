@@ -63,13 +63,16 @@ else
 fi
 
 cd "$WORKTREE"
+DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/garage-pr-$PR_NUMBER.XXXXXX")"
+trap 'rm -rf "$DATA_DIR"' EXIT
+export GARAGE_DATA_DIR="$DATA_DIR" GARAGE_DISPATCH=0 GARAGE_REPORT=0
+
 uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest -q
 
-DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/garage-pr-$PR_NUMBER.XXXXXX")"
 PORT="${GARAGE_TRY_PORT:-8772}"
 SERVE_ARGS=(serve --port "$PORT")
 if [[ -f "$HOME/.garage/projects.toml" ]]; then
@@ -78,8 +81,5 @@ elif [[ -f "$WORKTREE/examples/projects.toml" ]]; then
   SERVE_ARGS+=(--projects "$WORKTREE/examples/projects.toml")
 fi
 
-trap 'rm -rf "$DATA_DIR"' EXIT
 printf 'Garage test instance: http://127.0.0.1:%s\nData: %s\n' "$PORT" "$DATA_DIR"
-env -u GARAGE_PROJECTS -u GARAGE_MANIFEST \
-  GARAGE_DISPATCH=0 GARAGE_REPORT=0 GARAGE_DATA_DIR="$DATA_DIR" \
-  uv run garage "${SERVE_ARGS[@]}"
+env -u GARAGE_PROJECTS -u GARAGE_MANIFEST uv run garage "${SERVE_ARGS[@]}"

@@ -15,8 +15,6 @@ from importlib.resources import files
 
 LABEL = "ai.garage.serve"
 DEFAULT_PORT = 8770
-GARAGE_HOME = Path("~/.garage").expanduser()
-DEFAULT_PROJECTS = GARAGE_HOME / "projects.toml"
 DEFAULT_SOURCE = "git+https://github.com/sesh11/garage"
 DEFAULT_REF = "main"
 
