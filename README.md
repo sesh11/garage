@@ -259,6 +259,71 @@ Local settings: `GARAGE_DATA_DIR` (default `~/.garage`), `GARAGE_LOCAL_TIMEOUT` 
 arbitrary commands as your user. A worktree isolates git changes, not filesystem access or secrets. Use trusted
 tasks/repositories. Cloud execution and live question relays are deferred.
 
+## Running Garage on your Mac
+
+Garage serves every project in one always-on process on port `8770`. A **LaunchAgent** is macOS's way to start a
+program in the background when you log in and restart it if it stops. A **uv tool** is a command-line program
+installed separately from a development checkout. A **worktree** is another working folder for a Git branch; it
+shares the repository's history without changing your main checkout.
+
+There are three places to know about:
+
+1. Your development clone, usually `~/dev/garage`, where you edit Garage.
+2. The installed Garage tool, which runs in the background using `~/.garage/projects.toml` and
+   `~/.garage/.env`. The projects file is the one place to add Garage and any other projects; see
+   [Projects](#projects) for its format.
+3. Temporary PR test folders under `~/dev/garage-test/pr-N`, created by `scripts/try-pr.sh` in the development
+   clone. They do not replace the installed service.
+
+This replaces any Garage you already run on port `8770`; stop the old instance before installing this one.
+
+### Install and manage the service
+
+Once this change is on `main`, install the tool and create its starter projects file with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sesh11/garage/main/install.sh | bash
+```
+
+Or, from a development clone, run `bash install.sh`. The script updates the installed tool each time, creates
+`~/.garage/projects.toml` and a private `~/.garage/.env` only if they are missing, then installs or replaces the
+LaunchAgent on macOS. Edit the paths in `~/.garage/projects.toml` for your machine. Reporting and dispatch are off
+until enabled in `.env`; keep credentials private and never put them in a projects file, issue, PR, or log.
+
+```sh
+garage service install
+garage service status
+garage service restart
+tail -f ~/Library/Logs/garage/serve.log
+garage update
+```
+
+To dispatch a Garage issue, add the `factory:ready-for-fix` label. Garage checks on start and then at the configured
+dispatch interval. After merging changes to Garage, run `garage update` to reinstall from the configured source and
+restart the LaunchAgent. `GARAGE_INSTALL_SOURCE` and `GARAGE_INSTALL_REF` select the update source and ref; they
+default to the public Garage repository and `main`.
+
+From your development clone, validate a PR in an isolated worktree and start a test server on port `8772`:
+
+```sh
+scripts/try-pr.sh 123
+```
+
+The script runs sync, lint, formatting, type checks and tests before starting the server in the foreground. It prints
+the URL; press Ctrl-C to stop the server and remove its temporary data. Use `GARAGE_TRY_PORT` to choose another port,
+or `GARAGE_TRY_DIR` to choose another parent folder. Remove the test worktree and local branch with:
+
+```sh
+scripts/try-pr.sh 123 --clean
+```
+
+To uninstall the LaunchAgent and tool:
+
+```sh
+garage service uninstall
+uv tool uninstall garage
+```
+
 ## Local checks
 
 Run from a checkout:

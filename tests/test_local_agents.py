@@ -356,7 +356,7 @@ def test_direct_handoff_without_manifest(
 ) -> None:
     monkeypatch.setenv("GARAGE_CODEX_PATH", str(fake_cli))
     monkeypatch.setenv("GARAGE_DATA_DIR", str(tmp_path / "direct"))
-    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
     assert cli.main(["handoff", "--agent", "codex", "--repo-path", str(repo), "--no-push", "fix code"]) == 0
     output = capsys.readouterr().out
     assert "Status: finished" in output

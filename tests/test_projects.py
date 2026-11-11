@@ -362,7 +362,7 @@ async def test_dispatcher_tags_runs_with_their_project(tmp_path) -> None:
 
 
 def test_cli_lists_projects_and_filters_items(tmp_path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.setenv("GARAGE_DATA_DIR", str(tmp_path / "data"))
     projects = write_projects(tmp_path)
     assert cli.main(["projects", "--projects", str(projects)]) == 0
@@ -407,7 +407,7 @@ def test_cli_lists_projects_and_filters_items(tmp_path, monkeypatch, capsys) -> 
 
 
 def test_cli_report_and_dispatch_preview_every_project(tmp_path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "GitHubIssues", lambda *a, **k: (_ for _ in ()).throw(AssertionError("offline")))
     monkeypatch.setenv("GARAGE_DATA_DIR", str(tmp_path / "data"))
     projects = write_projects(tmp_path)
