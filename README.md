@@ -375,8 +375,8 @@ tail -f ~/Library/Logs/garage/serve.log
 garage update
 ```
 
-To dispatch a Garage issue, add the `factory:ready-for-fix` label. Garage checks on start and then at the configured
-dispatch interval. After merging changes to Garage, run `garage update` to reinstall from the configured source and
+To dispatch a Garage issue, approve it: add the `garage:ready-for-fix` label or run `garage approve <id>`. Garage
+checks on start and then at the configured dispatch interval. After merging changes to Garage, run `garage update` to reinstall from the configured source and
 restart the LaunchAgent. `GARAGE_INSTALL_SOURCE` and `GARAGE_INSTALL_REF` select the update source and ref; they
 default to the public Garage repository and `main`.
 
