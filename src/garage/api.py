@@ -69,6 +69,8 @@ def router(
                 return target.name, payload.repo or target.repo
         repo = payload.repo or client["default_repo"]
         target = bridge.project(repository=repo) if bridge is not None and repo else None
+        if repo and target is None and bridge is not None and any(project.name for project in bridge.projects):
+            return JSONResponse({"error": f"repo {repo} is not in any project"}, status_code=422)
         return (target.name if target is not None else None), repo
 
     async def file(item: InboxItem, name: str) -> JSONResponse | None:

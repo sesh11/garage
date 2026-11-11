@@ -15,8 +15,9 @@ from datetime import datetime, timezone, timedelta
 from collections.abc import Callable, Sequence
 
 import uvicorn
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
+from garage import service
 from garage.ui import UiProject, create_app
 from garage_sdk import configure
 from garage.store import UNASSIGNED, Store
@@ -627,7 +628,8 @@ async def _migrate_labels(settings: GarageSettings, apply: bool, include_closed:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the Garage CLI."""
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv(Path.home() / ".garage" / ".env")
     parser = argparse.ArgumentParser(prog="garage", description="Local incident monitoring and dispatch.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     schemas_parser = subparsers.add_parser("schemas", help="write v1 JSON schemas")
@@ -641,6 +643,8 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--kind", choices=["owner", "app", "agent"], required=True)
     add.add_argument("--default-repo")
     add.add_argument("--default-project", help="project used when a submission names neither project nor repo")
+    add.add_argument("--manifest", type=Path, default=argparse.SUPPRESS)
+    add.add_argument("--projects", type=Path, default=argparse.SUPPRESS, help=PROJECTS_HELP)
     clients.add_parser("list")
     remove = clients.add_parser("remove")
     remove.add_argument("name")
@@ -736,6 +740,23 @@ def main(argv: list[str] | None = None) -> int:
     status = subparsers.add_parser("handoff-status", help="recover and poll a detached local run")
     status.add_argument("run_id")
 
+    service_parser = subparsers.add_parser("service", help="run Garage in the background as a macOS LaunchAgent")
+    services = service_parser.add_subparsers(dest="service_command", required=True)
+    install = services.add_parser("install", help="write and load the LaunchAgent")
+    install.add_argument("--projects", type=Path, help="projects file (default: ~/.garage/projects.toml)")
+    install.add_argument("--data-dir", type=Path, help="Garage data directory (default: ~/.garage)")
+    install.add_argument("--port", type=int, default=service.DEFAULT_PORT)
+    install.add_argument("--garage-bin", type=Path, help="installed Garage executable")
+    install.add_argument("--dry-run", action="store_true", help="print the plist without touching launchd")
+    uninstall = services.add_parser("uninstall", help="unload and delete the LaunchAgent")
+    uninstall.add_argument("--dry-run", action="store_true")
+    services.add_parser("status", help="show launchd's view of the LaunchAgent")
+    services.add_parser("restart", help="restart the LaunchAgent")
+    update_parser = subparsers.add_parser("update", help="update the installed Garage tool and restart its service")
+    update_parser.add_argument("--source", default=os.getenv("GARAGE_INSTALL_SOURCE", service.DEFAULT_SOURCE))
+    update_parser.add_argument("--ref", default=os.getenv("GARAGE_INSTALL_REF", service.DEFAULT_REF))
+    update_parser.add_argument("--no-restart", action="store_true")
+
     args = parser.parse_args(argv)
     log_level = logging.getLevelNamesMapping().get(os.getenv("GARAGE_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -744,6 +765,25 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(_handoff(args))
         if args.command == "handoff-status":
             return asyncio.run(_handoff_status(args))
+        if args.command == "service":
+            if args.service_command == "status":
+                return service.status()
+            if args.service_command == "restart":
+                service.restart()
+            elif args.service_command == "uninstall":
+                service.uninstall(service.resolve_paths(), dry_run=args.dry_run)
+            else:
+                paths = service.resolve_paths(
+                    garage_bin=args.garage_bin,
+                    projects_file=args.projects,
+                    data_dir=args.data_dir,
+                    port=args.port,
+                )
+                service.install(paths, dry_run=args.dry_run)
+            return 0
+        if args.command == "update":
+            service.update(args.source, args.ref, restart_service=not args.no_restart)
+            return 0
         if args.command == "schemas":
             args.out.mkdir(parents=True, exist_ok=True)
             for name, schema in json_schemas().items():

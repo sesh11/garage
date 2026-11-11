@@ -157,3 +157,11 @@ def example_manifest() -> Path:
 @pytest.fixture(autouse=True)
 def _no_projects_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GARAGE_PROJECTS", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GARAGE_DATA_DIR", raising=False)

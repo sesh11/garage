@@ -39,7 +39,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-garage = ["ui/index.html"]
+garage = ["ui/index.html", "launchd/*.plist"]
 
 [tool.uv.workspace]
 members = ["packages/garage-sdk"]

@@ -100,6 +100,7 @@ def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
         body = body[:MAX_BODY_CHARS] + "\n[... truncated]"
     outpost = manifest.dispatch.outpost or ""
     base = manifest.dispatch.base_branch
+    protected = base if base == "main" else f"{base} or main"
     lines = [
         f"Fix GitHub issue #{issue.number} in {repo}: {scrub_text(issue.title)}",
         f"Issue: {issue.url}",
@@ -110,7 +111,7 @@ def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
         "",
         "Rules:",
         f"- Work only in {repo}. Branch off the latest {base} and open ONE pull request into {base} "
-        f"with 'Closes #{issue.number}' in its body. Never merge, never push directly to {base} or main, never deploy.",
+        f"with 'Closes #{issue.number}' in its body. Never merge, never push directly to {protected}, never deploy.",
     ]
     checks = manifest.build.check
     if checks:

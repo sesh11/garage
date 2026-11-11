@@ -384,6 +384,8 @@ def create_app(
                 else None
             )
             repo = work.repo or (target.repo if target is not None else None)
+            if target is None and bridge is not None and any(project.name for project in bridge.projects):
+                repo = None  # not in any project: wait in needs_repo for `garage assign`
             item, _ = store.submit(
                 "legacy-bridge", ClientKind.app, work, repo, target.name if target is not None else None
             )
