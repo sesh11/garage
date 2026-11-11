@@ -2,6 +2,7 @@
 
 import hmac
 import json
+import getpass
 import logging
 import ipaddress
 from pathlib import Path
@@ -19,7 +20,7 @@ from garage.store import UNASSIGNED, Store
 from garage.report import IncidentReporter
 from garage.tracker import IssueRecord
 from garage_sdk.api import IssueLink, ItemState, ClientKind, SubmitWork, ProjectInfo, normalize_project
-from garage.approval import Approvals, ApprovalError, initial_state
+from garage.approval import Approvals, ApprovalError, describe, initial_state
 from garage.requests import Request as GarageRequest
 from garage.requests import RequestBridge
 from garage_sdk.events import EventLog
@@ -266,7 +267,25 @@ def create_app(
             except ValueError:
                 return JSONResponse(status_code=422, content={"error": "invalid project"})
         items = store.items(state, project or None)[: max(1, min(limit, 1000))]
-        return {"items": [item.model_dump(mode="json") for item in items]}
+        decisions = store.last_decisions()
+        return {
+            "items": [
+                {**item.model_dump(mode="json"), "decision": describe(decisions[item.id])}
+                if item.id in decisions
+                else item.model_dump(mode="json")
+                for item in items
+            ]
+        }
+
+    @app.get("/api/items/{item_id}/history", response_model=None)
+    async def item_history(item_id: str, request: Request) -> dict[str, object] | JSONResponse:
+        """One item's decision log, oldest first, with a readable line per entry."""
+        denied = check_bridge_request(request, bridge_auth=False)
+        if denied is not None:
+            return denied
+        if store is None or store.get(item_id) is None:
+            return JSONResponse(status_code=404, content={"error": "not found"})
+        return {"history": [{**entry, "text": describe(entry)} for entry in store.history(item_id)]}
 
     @app.post("/api/items/{item_id}/{decision}", response_model=None)
     async def decide(item_id: str, decision: str, request: Request) -> dict[str, object] | JSONResponse:
@@ -283,7 +302,7 @@ def create_app(
             return JSONResponse(status_code=404, content={"error": "not found"})
         try:
             act = approvals.approve if decision == "approve" else approvals.decline
-            item = await act(item, "owner", "dashboard")
+            item = await act(item, getpass.getuser(), "dashboard")
         except ApprovalError as exc:
             return JSONResponse(status_code=409, content={"error": str(exc)})
         except Exception as exc:

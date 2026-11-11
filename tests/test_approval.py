@@ -344,3 +344,78 @@ def test_cli_ask_approve_and_decline(tmp_path, monkeypatch, capsys) -> None:
     assert PROPOSED not in tracker.issues[-1].labels
     assert cli.main(["intake", "--manifest", manifest, "--since", "1h"]) == 0
     assert PROPOSED in tracker.issues[-1].labels
+    capsys.readouterr()
+    monkeypatch.setattr("getpass.getuser", lambda: "nithin")
+    assert cli.main(["ask", "--manifest", manifest, "Third ask"]) == 0
+    assert cli.main(["approve", "--manifest", manifest, "#4"]) == 0
+    capsys.readouterr()
+    assert cli.main(["log", "--manifest", manifest, "4"]) == 0
+    out = capsys.readouterr().out
+    assert "#4  approved  Third ask" in out and "approved by nithin via terminal" in out
+    assert cli.main(["log", "--manifest", manifest, "--json", "4"]) == 0
+    assert json.loads(capsys.readouterr().out)["history"][-2]["detail"] == {"via": "terminal"}
+    assert cli.main(["log", "--manifest", manifest, "99"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_decision_log_records_who_decided_on_github_and_in_garage(setup, tmp_path) -> None:
+    from garage.approval import describe
+
+    tracker, store, watcher, approvals, _ = setup
+    tracker.issues = [issue(1), issue(2), issue(3)]
+    tracker.actors = {(1, "labeled"): "sesh11", (2, "closed"): "sesh11"}
+    await watcher.poll_once()
+    on_github(tracker, 1, labels=[*tracker.issues[0].labels, READY])
+    on_github(tracker, 2, state="closed", state_reason="not_planned")
+    await watcher.poll_once()
+    first, second, third = (store.by_issue(REPO, n) for n in (1, 2, 3))
+    assert [describe(entry) for entry in store.history(first.id)] == [
+        "submitted by github",
+        "taken in from GitHub",
+        "state new -> awaiting_approval",
+        "approved by sesh11 via GitHub",
+        "state awaiting_approval -> approved",
+    ]
+    assert "declined by sesh11 via GitHub (closed as not planned)" in [
+        describe(entry) for entry in store.history(second.id)
+    ]
+    assert any("Approved on GitHub by @sesh11" in body for _, body in tracker.comments)
+    await approvals.approve(third, "nithin", "dashboard")
+    assert {item_id: describe(entry) for item_id, entry in store.last_decisions().items()} == {
+        first.id: "approved by sesh11 via GitHub",
+        second.id: "declined by sesh11 via GitHub (closed as not planned)",
+        third.id: "approved by nithin via dashboard",
+    }
+    tracker.actors = {}
+    on_github(tracker, 2, state="open", state_reason=None)
+    await watcher.poll_once()
+    assert describe(store.history(second.id)[-2]) == "reopened on GitHub"
+
+    client = TestClient(
+        create_app(store=store, approvals=approvals), base_url="http://127.0.0.1", client=("127.0.0.1", 50000)
+    )
+    listed = {item["id"]: item for item in client.get("/api/items").json()["items"]}
+    assert listed[third.id]["decision"] == "approved by nithin via dashboard"
+    history = client.get(f"/api/items/{first.id}/history").json()["history"]
+    assert history[3]["text"] == "approved by sesh11 via GitHub" and history[3]["detail"]["by"] == "sesh11"
+    assert client.get("/api/items/nope/history").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_github_last_actor_reads_issue_events() -> None:
+    events = [
+        {"event": "labeled", "label": {"name": "factory:ready-for-fix"}, "actor": {"login": "old"}},
+        {"event": "labeled", "label": {"name": "bug"}, "actor": {"login": "someone"}},
+        {"event": "labeled", "label": {"name": READY}, "actor": {"login": "sesh11"}},
+        {"event": "closed", "actor": {"login": "closer"}},
+    ]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/repos/o/r/issues/5/events"
+        return httpx.Response(200, json=events)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        github = GitHubIssues("o/r", "token", http=http)
+        assert await github.last_actor(5, "labeled", READY) == "sesh11"
+        assert await github.last_actor(5, "closed") == "closer"
+        assert await github.last_actor(5, "reopened") is None

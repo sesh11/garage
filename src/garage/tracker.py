@@ -98,3 +98,7 @@ class IssueFeed(Tracker, Protocol):
     ) -> tuple[list[IssueRecord], str | None, bool]:
         """Return issues and pull requests updated at or after ``since``, the new ETag, and not-modified."""
         ...
+
+    async def last_actor(self, number: int, event: str, label: str | None = None) -> str | None:
+        """Return the GitHub login that last did ``event`` (``labeled``, ``closed``, ``reopened``) on an issue."""
+        ...

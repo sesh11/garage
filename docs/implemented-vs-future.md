@@ -25,6 +25,8 @@
   project's repository every 60 seconds with ETags and skips pull requests, closed issues, issues an agent already
   has, below-threshold incidents, and issues older than its start. Dispatch starts only approved issues and never
   one declined in Garage. `[policy].needs_approval` without `"triage"` turns the gate off.
+- Decision log: every approve/decline is recorded in Garage with who (the GitHub login for label or close
+  decisions), when, and where; `garage log <id>`, the dashboard Inbox, and `/api/items/<id>/history` show it.
 - Label namespace: Garage writes only `garage:*` labels and still reads old `factory:*` labels as their `garage:`
   equivalents. `garage labels migrate --project <name>` lists open issues with old labels; `--apply` relabels them.
 - Root Ruff, mypy, and pytest checks cover the service and SDK.

@@ -83,6 +83,22 @@ the same number exists in two projects. Approving from the dashboard or terminal
 removes `garage:proposed`, and comments on the issue; declining comments and closes the issue as "not planned".
 Approving on GitHub is picked up by the watcher on its next poll. Reopening a declined issue asks again.
 
+**Decision log.** Garage records every decision in its own database, whichever surface it came from: who, when,
+and where. For a GitHub label or close, "who" is the GitHub login that made the change (read from the issue's
+events); for the terminal and dashboard it is the Mac user running Garage. `garage log <id>` prints an item's
+history (`--json` for the raw entries); the dashboard's Inbox shows each item's latest decision, and
+`GET /api/items/<id>/history` returns the full log.
+
+```text
+$ garage log 31
+item_3f2a  #31  approved  Add a night mode
+  2026-11-09 15:02  submitted by github
+  2026-11-09 15:02  taken in from GitHub
+  2026-11-09 15:02  state new -> awaiting_approval
+  2026-11-09 15:40  approved by sesh11 via GitHub
+  2026-11-09 15:40  state awaiting_approval -> approved
+```
+
 Ways work comes in:
 
 - `garage ask --project <name> "Add a night mode"` files a request issue (`garage:request` + `garage:proposed`).

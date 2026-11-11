@@ -20,6 +20,10 @@ class FakeTracker:
         self.calls: list[str] = []
         self.labels: dict[str, tuple[str, str]] = {}
         self.fail_create = False
+        self.actors: dict[tuple[int, str], str] = {}
+
+    async def last_actor(self, number: int, event: str, label: str | None = None) -> str | None:
+        return self.actors.get((number, event))
 
     async def changed_since(
         self, since: datetime, etag: str | None = None

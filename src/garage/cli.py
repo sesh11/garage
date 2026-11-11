@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import asyncio
+import getpass
 import logging
 import secrets
 import argparse
@@ -35,6 +36,7 @@ from garage.approval import (
     IssueWatcher,
     ApprovalError,
     ApprovalTarget,
+    describe,
     dispatch_hold,
     initial_state,
 )
@@ -566,7 +568,7 @@ async def _decide(projects: Sequence[GarageSettings], ref: str, project: str | N
     approvals = build_approvals(projects, store)
     try:
         item = approvals.find(ref, project)
-        item = await (approvals.approve if approve else approvals.decline)(item, "cli", "terminal")
+        item = await (approvals.approve if approve else approvals.decline)(item, getpass.getuser(), "terminal")
     except ApprovalError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -583,6 +585,25 @@ async def _intake(settings: GarageSettings, dry_run: bool, since: str | None) ->
     if watcher is None:
         raise ValueError("GARAGE_GITHUB_TOKEN is not set; intake reads the project's GitHub issues")
     return await watcher.poll_once()
+
+
+def _log(projects: Sequence[GarageSettings], ref: str, project: str | None, as_json: bool) -> int:
+    store = Store(projects[0].data_dir / "garage.db")
+    try:
+        item = build_approvals(projects, store).find(ref, project)
+    except ApprovalError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    entries = store.history(item.id)
+    if as_json:
+        print(json.dumps({"item": item.model_dump(mode="json"), "history": entries}, indent=2))
+        return 0
+    issue = f"  #{item.issue.number}" if item.issue else ""
+    print(f"{item.id}{issue}  {item.state}  {item.text.splitlines()[0][:80] if item.text else ''}")
+    for entry in entries:
+        at = datetime.fromisoformat(str(entry["at"])).astimezone().strftime("%Y-%m-%d %H:%M")
+        print(f"  {at}  {describe(entry)}")
+    return 0
 
 
 async def _migrate_labels(settings: GarageSettings, apply: bool, include_closed: bool) -> list[str]:
@@ -655,6 +676,13 @@ def main(argv: list[str] | None = None) -> int:
     intake_parser.add_argument("--dry-run", action="store_true", help="print actions without changing anything")
     intake_parser.add_argument("--since", help="also look at issues opened this far back, such as 1h or 2d")
     intake_parser.set_defaults(offline=False)
+
+    log_parser = subparsers.add_parser("log", help="show an item's decision log (who approved, when, from where)")
+    log_parser.add_argument("--manifest", type=Path)
+    log_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+    log_parser.add_argument("--project", help="the item's project, when an issue number is ambiguous")
+    log_parser.add_argument("--json", action="store_true")
+    log_parser.add_argument("id", help="item id, issue number, or issue URL")
 
     labels_parser = subparsers.add_parser("labels", help="manage Garage's GitHub labels")
     label_commands = labels_parser.add_subparsers(dest="labels_command", required=True)
@@ -755,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
                 print("several projects: name one with --project", file=sys.stderr)
                 return 2
             return asyncio.run(_ask(chosen[0], args.text))
+        if args.command == "log":
+            return _log(projects, args.id, args.project, args.json)
         if args.command == "labels":
             apply = args.apply and not args.dry_run
             prefix = "" if apply else "[dry run] "

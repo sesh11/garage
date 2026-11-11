@@ -213,6 +213,23 @@ class Store:
                     changed += 1
         return changed
 
+    def history(self, item_id: str) -> list[dict[str, object]]:
+        """Return an item's audit log, oldest first: when, who (client), what (action), and details."""
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT at,client,action,detail FROM audit WHERE item_id=? ORDER BY id", (item_id,)
+            ).fetchall()
+        return [{**dict(row), "detail": json.loads(row["detail"])} for row in rows]
+
+    def last_decisions(self) -> dict[str, dict[str, object]]:
+        """Return each item's latest approve or decline audit entry, keyed by item id."""
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT item_id,at,client,action,detail FROM audit WHERE id IN (SELECT MAX(id) FROM audit "
+                "WHERE action IN ('approve','decline') GROUP BY item_id)"
+            ).fetchall()
+        return {row["item_id"]: {**dict(row), "detail": json.loads(row["detail"])} for row in rows}
+
     def save(self, item: InboxItem, client: str, action: str, detail: dict[str, object] | None = None) -> None:
         """Persist mutable fields and their audit record atomically."""
         item.updated_at = datetime.now(timezone.utc)

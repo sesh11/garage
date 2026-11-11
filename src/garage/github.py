@@ -101,6 +101,21 @@ class GitHubIssues:
             url = match.group(1) if match else None
         return items
 
+    async def last_actor(self, number: int, event: str, label: str | None = None) -> str | None:
+        """Return the GitHub login that last did ``event`` on the issue (for ``labeled``, with that label)."""
+        login: str | None = None
+        for item in await self._pages(f"{self._repo_path}/issues/{number}/events?per_page=100"):
+            if item.get("event") != event:
+                continue
+            named = item.get("label")
+            if label is not None and not (
+                isinstance(named, dict) and canonical_label(str(named.get("name"))) == label
+            ):
+                continue
+            actor = item.get("actor")
+            login = str(actor.get("login")) if isinstance(actor, dict) and actor.get("login") else login
+        return login
+
     async def legacy_labeled(self, *, include_closed: bool = False) -> list[tuple[int, str, list[str]]]:
         """Return (number, title, old ``factory:`` labels) for every issue or PR still carrying one."""
         state = "all" if include_closed else "open"

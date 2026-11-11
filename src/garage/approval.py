@@ -185,6 +185,30 @@ class Approvals:
         return item
 
 
+def describe(entry: dict[str, object]) -> str:
+    """Return one decision-log entry as a short sentence, such as ``approved by sesh11 via GitHub``."""
+    detail = entry["detail"] if isinstance(entry["detail"], dict) else {}
+    action, client = str(entry["action"]), str(entry["client"])
+    who = detail.get("by") or (None if client == GITHUB_CLIENT else client)
+    via = {"github": "GitHub"}.get(str(detail.get("via")), detail.get("via"))
+    by = f" by {who}" if who else ""
+    where = f" via {via}" if via else ""
+    if action in {"approve", "decline"}:
+        reason = " (closed as not planned)" if detail.get("state_reason") == "not_planned" else ""
+        return f"{action}d{by}{where}{reason}"
+    if action == "state_change":
+        return f"state {detail.get('from')} -> {detail.get('to')}"
+    if action == "submit":
+        return f"submitted by {client}"
+    if action == "intake":
+        return "taken in from GitHub"
+    if action == "github_closed":
+        return f"closed on GitHub{by}" + (f" ({detail['state_reason']})" if detail.get("state_reason") else "")
+    if action == "github_reopened":
+        return f"reopened on GitHub{by}"
+    return action.replace("_", " ") + (f" by {client}" if client != GITHUB_CLIENT else "")
+
+
 def _after(item: InboxItem) -> str:
     step = next_step(item)
     return "A coding agent starts on the next dispatch poll." if step == "dispatch" else f"Next: {step}."
@@ -381,6 +405,14 @@ class IssueWatcher:
             f"`garage decline {item.id}`.",
         )
 
+    async def _actor(self, number: int, event: str, label: str | None = None) -> str | None:
+        """Look up who made a change on GitHub, for the decision log; None if GitHub can't say."""
+        try:
+            return await self.tracker.last_actor(number, event, label)
+        except Exception as exc:
+            logger.warning("Could not look up who %s #%s: %s", event, number, exc)
+            return None
+
     async def _reconcile(self, item: InboxItem, issue: IssueRecord) -> str | None:
         before = item.state
         tag = f"#{issue.number}"
@@ -395,13 +427,20 @@ class IssueWatcher:
                 return f"{tag} closed on GitHub: {before.value} -> {item.state.value}"
             if PROPOSED in issue.labels:
                 await self.tracker.remove_label(issue.number, PROPOSED)
-            self.store.save(item, GITHUB_CLIENT, "github_closed", {"state_reason": issue.state_reason})
+            by = await self._actor(issue.number, "closed")
+            detail: dict[str, object] = {"via": "github", "by": by, "state_reason": issue.state_reason}
+            if item.state == ItemState.declined:
+                self.store.save(item, GITHUB_CLIENT, "decline", detail)
+            else:
+                self.store.save(item, GITHUB_CLIENT, "github_closed", detail)
             return f"{tag} closed on GitHub: {before.value} -> {item.state.value}"
         if item.state in {ItemState.declined, ItemState.done}:
             item.state = initial_state(issue.labels, self.needs_approval)
             if self.dry_run:
                 return f"{tag} reopened on GitHub: {before.value} -> {item.state.value}"
-            self.store.save(item, GITHUB_CLIENT, "github_reopened")
+            self.store.save(
+                item, GITHUB_CLIENT, "github_reopened", {"by": await self._actor(issue.number, "reopened")}
+            )
             if item.state == ItemState.awaiting_approval and PROPOSED not in issue.labels:
                 await self._propose(item, issue)
             return f"{tag} reopened on GitHub: {before.value} -> {item.state.value}"
@@ -409,10 +448,12 @@ class IssueWatcher:
             item.state = ItemState.approved
             if self.dry_run:
                 return f"{tag} approved on GitHub: {before.value} -> approved"
-            self.store.save(item, GITHUB_CLIENT, "approve", {"via": "github"})
+            by = await self._actor(issue.number, "labeled", READY)
+            self.store.save(item, GITHUB_CLIENT, "approve", {"via": "github", "by": by})
             if PROPOSED in issue.labels:
                 await self.tracker.remove_label(issue.number, PROPOSED)
-                await self.tracker.comment(issue.number, f"Approved on GitHub. {_after(item)}")
+                who = f" by @{by}" if by else ""
+                await self.tracker.comment(issue.number, f"Approved on GitHub{who}. {_after(item)}")
             emit("factory.approved", "factory", item=item.id, issue=issue.number, via="github")
             if next_step(item) == "dispatch" and self.on_approved is not None:
                 self.on_approved()

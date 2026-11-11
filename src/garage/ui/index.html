@@ -80,7 +80,7 @@
   </table>
   <h2 class="meta">Inbox</h2>
   <table>
-    <thead><tr><th>State</th><th>Item</th><th>Project</th><th>From</th><th>Issue</th></tr></thead>
+    <thead><tr><th>State</th><th>Item</th><th>Project</th><th>From</th><th>Issue</th><th>Decision</th></tr></thead>
     <tbody id="items"></tbody>
   </table>
   <script>
@@ -168,18 +168,20 @@
       body.replaceChildren();
       items.forEach(item => {
         const row = document.createElement("tr");
-        row.innerHTML = '<td><span class="pill"></span></td><td></td><td></td><td></td><td></td>';
+        row.innerHTML = '<td><span class="pill"></span></td><td></td><td></td><td></td><td></td><td class="meta"></td>';
         const cells = row.querySelectorAll("td");
         cells[0].firstChild.textContent = item.state;
         cells[1].textContent = item.text;
         cells[2].textContent = item.project || "(no project)";
         cells[3].textContent = item.submitted_by;
         cells[4].appendChild(issueLink(item));
+        cells[5].textContent = item.decision || "";
+        cells[5].title = "Full log: garage log " + item.id;
         body.appendChild(row);
       });
       if (!items.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="5" class="empty">No inbox items.</td>';
+        row.innerHTML = '<td colspan="6" class="empty">No inbox items.</td>';
         body.appendChild(row);
       }
     }
