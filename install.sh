@@ -53,6 +53,7 @@ if [[ ! -f "$HOME/.garage/.env" ]]; then
 # DEVIN_ORG_ID=
 # GARAGE_DISPATCH=0
 # GARAGE_REPORT=0
+# GARAGE_INTAKE=0
 ENV
   chmod 600 "$HOME/.garage/.env"
 fi

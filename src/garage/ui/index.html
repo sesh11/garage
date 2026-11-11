@@ -28,6 +28,13 @@
     .empty { color: #888; padding: 24px; text-align: center; }
     h2 { font-size: .9rem; font-weight: 600; margin: 28px 0 0; }
     label { margin-left: 10px; }
+    #waiting-section { border: 1px solid #d9a20088; border-radius: 8px; margin-top: 18px; padding: 4px 12px 10px; }
+    #waiting-section h2 { margin-top: 10px; }
+    #waiting td:last-child { white-space: nowrap; }
+    button { border: 1px solid #8888; border-radius: 6px; cursor: pointer; font: inherit; margin: 0 4px 4px 0; padding: 5px 10px; }
+    button.approve { background: #2a984d; border-color: #2a984d; color: #fff; }
+    button:disabled { cursor: default; opacity: .5; }
+    .error { color: #d44a4a; font-size: .85rem; }
     @media (max-width: 700px) {
       body { padding: 14px; }
       th:nth-child(1) { width: 20%; } th:nth-child(2) { width: auto; }
@@ -57,6 +64,15 @@
     </label>
     </div>
   </header>
+  <section id="waiting-section" hidden>
+    <h2>Waiting for you</h2>
+    <div class="meta">No coding agent starts until you approve. On GitHub: add <code>garage:ready-for-fix</code> to
+      approve, close the issue to decline.</div>
+    <table>
+      <thead><tr><th>Project</th><th>Item</th><th>From</th><th>Issue</th><th>Decide</th></tr></thead>
+      <tbody id="waiting"></tbody>
+    </table>
+  </section>
   <div id="incident-meta" class="meta"></div>
   <table>
     <thead><tr><th>Severity</th><th>Incident</th><th>Count</th><th>Last seen</th><th>Status</th></tr></thead>
@@ -64,7 +80,7 @@
   </table>
   <h2 class="meta">Inbox</h2>
   <table>
-    <thead><tr><th>State</th><th>Item</th><th>Project</th><th>From</th><th>Issue</th></tr></thead>
+    <thead><tr><th>State</th><th>Item</th><th>Project</th><th>From</th><th>Issue</th><th>Decision</th></tr></thead>
     <tbody id="items"></tbody>
   </table>
   <script>
@@ -152,27 +168,77 @@
       body.replaceChildren();
       items.forEach(item => {
         const row = document.createElement("tr");
-        row.innerHTML = '<td><span class="pill"></span></td><td></td><td></td><td></td><td></td>';
+        row.innerHTML = '<td><span class="pill"></span></td><td></td><td></td><td></td><td></td><td class="meta"></td>';
         const cells = row.querySelectorAll("td");
         cells[0].firstChild.textContent = item.state;
         cells[1].textContent = item.text;
         cells[2].textContent = item.project || "(no project)";
         cells[3].textContent = item.submitted_by;
-        if (item.issue) {
-          const link = document.createElement("a");
-          link.href = item.issue.url;
-          link.target = "_blank";
-          link.rel = "noopener";
-          link.textContent = "#" + item.issue.number;
-          cells[4].appendChild(link);
-        }
+        cells[4].appendChild(issueLink(item));
+        cells[5].textContent = item.decision || "";
+        cells[5].title = "Full log: garage log " + item.id;
         body.appendChild(row);
       });
       if (!items.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="5" class="empty">No inbox items.</td>';
+        row.innerHTML = '<td colspan="6" class="empty">No inbox items.</td>';
         body.appendChild(row);
       }
+    }
+    const pending = new Set();
+    const failures = new Map();
+    function issueLink(item) {
+      if (!item.issue) return document.createTextNode("");
+      const link = document.createElement("a");
+      link.href = item.issue.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "#" + item.issue.number;
+      return link;
+    }
+    async function decide(item, decision) {
+      pending.add(item.id);
+      failures.delete(item.id);
+      try {
+        const response = await fetch("/api/items/" + encodeURIComponent(item.id) + "/" + decision, {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: "{}",
+        });
+        if (!response.ok) failures.set(item.id, (await response.json()).error || response.statusText);
+      } catch (error) {
+        failures.set(item.id, String(error));
+      }
+      pending.delete(item.id);
+      refresh();
+    }
+    function renderWaiting(items) {
+      const waiting = items.filter(item => item.state === "awaiting_approval").reverse();
+      document.getElementById("waiting-section").hidden = !waiting.length;
+      const body = document.getElementById("waiting");
+      body.replaceChildren();
+      waiting.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
+        const cells = row.querySelectorAll("td");
+        cells[0].textContent = item.project || "(no project)";
+        cells[1].textContent = item.text.length > 280 ? item.text.slice(0, 280) + "…" : item.text;
+        cells[2].textContent = item.submitted_by;
+        cells[3].appendChild(issueLink(item));
+        [["approve", "Approve"], ["decline", "Decline"]].forEach(([decision, label]) => {
+          const button = document.createElement("button");
+          button.className = decision;
+          button.textContent = label;
+          button.disabled = pending.has(item.id);
+          button.addEventListener("click", () => decide(item, decision));
+          cells[4].appendChild(button);
+        });
+        if (failures.has(item.id)) {
+          const error = document.createElement("div");
+          error.className = "error";
+          error.textContent = failures.get(item.id);
+          cells[4].appendChild(error);
+        }
+        body.appendChild(row);
+      });
     }
     const projectSelect = document.getElementById("project");
     async function loadProjects() {
@@ -203,7 +269,9 @@
       renderIncidents(project === "_unassigned" ? {incidents: [], detector: null} :
         await (await fetch("/api/incidents" + incidentQuery)).json());
       const items = await fetch("/api/items" + (project ? "?project=" + encodeURIComponent(project) : ""));
-      renderItems(items.ok ? (await items.json()).items : []);
+      const listed = items.ok ? (await items.json()).items : [];
+      renderWaiting(listed);
+      renderItems(listed);
     }
     projectSelect.addEventListener("change", () => {
       const url = new URL(location.href);

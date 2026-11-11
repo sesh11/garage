@@ -24,17 +24,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-INCIDENT = "factory:incident"
-REQUEST = "factory:request"
-OBSERVED = "factory:observed"
-READY = "factory:ready-for-fix"
-FIXING = "factory:fixing"
-DISPATCHED = "factory:dispatched"
+INCIDENT = "garage:incident"
+REQUEST = "garage:request"
+OBSERVED = "garage:observed"
+READY = "garage:ready-for-fix"
+PROPOSED = "garage:proposed"
+FIXING = "garage:fixing"
+DISPATCHED = "garage:dispatched"
 LABELS: dict[str, tuple[str, str]] = {
     INCIDENT: ("5319e7", "Filed automatically from an incident the app detected"),
     REQUEST: ("1d76db", "Fix or feature request submitted through the bridge"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),
-    READY: ("d93f0b", "Ready for a Devin fix session"),
+    PROPOSED: ("bfd4f2", "Waiting for the owner's approval; add garage:ready-for-fix to approve, close to decline"),
+    READY: ("d93f0b", "Approved: ready for a coding-agent fix session"),
     FIXING: ("0e8a16", "A Devin session is working on it"),
     DISPATCHED: ("c5def5", "A Devin fix session was started; remove to allow another"),
 }
@@ -112,8 +114,8 @@ def render_incident_body(
         *(_sample_line(event) for event in samples),
         "```",
         "",
-        f"`{OBSERVED}` until the count reaches the threshold, then `{READY}`. "
-        f"Add `{READY}` by hand to ask for a fix sooner.",
+        f"`{OBSERVED}` until the count reaches the threshold, then `{PROPOSED}` (waiting for approval). "
+        f"Add `{READY}` to approve a fix, sooner if you like; close the issue to decline.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -141,9 +143,16 @@ class IncidentReporter:
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         attribution: str = DEFAULT_ATTRIBUTION,
         on_filed: Callable[[Incident, IssueRecord, bool], None] | None = None,
+        needs_approval: bool = True,
     ) -> None:
-        """Configure the GitHub client, safety caps, and dry-run mode."""
+        """Configure the GitHub client, safety caps, and dry-run mode.
+
+        With ``needs_approval`` an incident reaching its threshold is labeled ``garage:proposed`` and waits for
+        the owner; without it, it goes straight to ``garage:ready-for-fix`` as before.
+        """
         self.issues = issues
+        self.needs_approval = needs_approval
+        self.ready_label = PROPOSED if needs_approval else READY
         self.max_new_per_day = max_new_per_day
         self.min_update_interval = min_update_interval
         self.dry_run = dry_run
@@ -241,23 +250,27 @@ class IncidentReporter:
             return None
         count = sum(1 for event in incident.samples if event.ts > since) if since else incident.count
         body = render_incident_body(incident, count, since, self.attribution)
-        became_ready = count >= incident.threshold and READY not in issue.labels
+        became_ready = count >= incident.threshold and not {READY, PROPOSED} & set(issue.labels)
+        label = self.ready_label
         if self.dry_run:
             if became_ready:
-                return f"label #{issue.number} {READY}: {title}"
+                return f"label #{issue.number} {label}: {title}"
             return f"update #{issue.number}: {title}" if body != issue.body else None
         actions: list[str] = []
         if became_ready:
-            await self.issues.add_labels(issue.number, [READY])
+            await self.issues.add_labels(issue.number, [label])
             await self.issues.remove_label(issue.number, OBSERVED)
+            approve = f" Add `{READY}` to approve a fix, or close to decline." if label == PROPOSED else ""
             await self.issues.comment(
                 issue.number,
                 f"Reached the threshold: {count} / {incident.threshold} in {_window(incident.window_s)}. "
-                f"Labeled `{READY}`.",
+                f"Labeled `{label}`.{approve}",
             )
-            issue.labels = [label for label in issue.labels if label != OBSERVED] + [READY]
+            issue.labels = [name for name in issue.labels if name != OBSERVED] + [label]
             emit("factory.issue_ready", "factory", issue=issue.number, fingerprint=incident.fingerprint)
-            actions.append(f"label #{issue.number} {READY}")
+            if self.on_filed is not None:
+                self.on_filed(incident, issue, True)
+            actions.append(f"label #{issue.number} {label}")
         last_edit = self._last_edit.get(issue.number)
         if body != issue.body and (became_ready or last_edit is None or now - last_edit >= self.min_update_interval):
             updated = await self.issues.update_issue(issue.number, body=body)
@@ -277,7 +290,7 @@ class IncidentReporter:
                 )
                 emit("factory.report_capped", "factory", "warning", cap=self.max_new_per_day)
             return f"skip (daily cap {self.max_new_per_day}): {title}"
-        labels = [INCIDENT, READY if incident.ready else OBSERVED]
+        labels = [INCIDENT, self.ready_label if incident.ready else OBSERVED]
         body = render_incident_body(incident, incident.count, None, self.attribution)
         if self.dry_run:
             return f"open [{', '.join(labels)}]: {title}"
@@ -304,16 +317,17 @@ class IncidentReporter:
             return f"reopen #{issue.number}: {title}"
         body = render_incident_body(incident, len(fresh), closed_at, self.attribution)
         updated = await self.issues.update_issue(issue.number, body=body, state="open")
-        for stale in (READY, FIXING, OBSERVED):
+        fresh_label = self.ready_label if ready else OBSERVED
+        for stale in (READY, PROPOSED, FIXING, OBSERVED):
             if stale in issue.labels:
                 await self.issues.remove_label(issue.number, stale)
-        await self.issues.add_labels(issue.number, [READY if ready else OBSERVED])
+        await self.issues.add_labels(issue.number, [fresh_label])
         await self.issues.comment(
             issue.number,
             f"Seen again after this issue was closed on {_utc(closed_at)}: {len(fresh)} time(s) since. Reopened.",
         )
-        updated.labels = [label for label in updated.labels if label not in (READY, FIXING, OBSERVED)]
-        updated.labels.append(READY if ready else OBSERVED)
+        updated.labels = [label for label in updated.labels if label not in (READY, PROPOSED, FIXING, OBSERVED)]
+        updated.labels.append(fresh_label)
         if self.on_filed is not None:
             self.on_filed(incident, updated, ready)
         index[incident.fingerprint] = updated
@@ -322,7 +336,9 @@ class IncidentReporter:
         return f"reopen #{issue.number}: {title}"
 
 
-def render_request_body(request: Request, attribution: str = DEFAULT_REQUEST_ATTRIBUTION) -> str:
+def render_request_body(
+    request: Request, attribution: str = DEFAULT_REQUEST_ATTRIBUTION, *, needs_approval: bool = False
+) -> str:
     """Render the issue body for a submitted request."""
     text = scrub_text(request.request).strip()
     quoted = "\n".join(f"> {line}" if line else ">" for line in text.splitlines()) or "> (empty)"
@@ -330,8 +346,14 @@ def render_request_body(request: Request, attribution: str = DEFAULT_REQUEST_ATT
         f"<!-- factory-request: {request.id} -->\n"
         f"Requested on {_utc(request.created_at)}. {attribution}\n\n"
         f"{quoted}\n\n"
-        f"Request `{request.id}`. Requests skip `{OBSERVED}` and go straight to `{READY}`; "
-        f"the label changes to `{FIXING}` once a Devin session starts on it.\n"
+        + (
+            f"Request `{request.id}` is `{PROPOSED}`: it waits for approval. Add `{READY}` to approve it, or close "
+            f"this issue to decline. On the Mac: `garage approve {request.id}` or the dashboard's Waiting for you "
+            f"list. A coding agent starts only after approval.\n"
+            if needs_approval
+            else f"Request `{request.id}`. Requests skip `{OBSERVED}` and go straight to `{READY}`; "
+            f"the label changes to `{FIXING}` once a Devin session starts on it.\n"
+        )
     )
 
 
@@ -345,9 +367,11 @@ class RequestLogger:
         max_per_day: int = 5,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         attribution: str = DEFAULT_REQUEST_ATTRIBUTION,
+        needs_approval: bool = True,
     ) -> None:
-        """Configure the GitHub client and a daily cap against accidental wakes."""
+        """Configure the GitHub client and a daily cap; ``needs_approval`` files requests as proposed."""
         self.issues = issues
+        self.needs_approval = needs_approval
         self.max_per_day = max_per_day
         self.clock = clock
         self.attribution = attribution
@@ -397,8 +421,8 @@ class RequestLogger:
         title = f"Request: {summary[:80]}{'…' if len(summary) > 80 else ''}"
         issue = await self.issues.create_issue(
             title,
-            render_request_body(request, self.attribution),
-            [REQUEST, READY],
+            render_request_body(request, self.attribution, needs_approval=self.needs_approval),
+            [REQUEST, PROPOSED if self.needs_approval else READY],
         )
         self._filed.append(issue.created_at)
         self._request_index[request.id] = issue

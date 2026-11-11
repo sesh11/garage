@@ -56,7 +56,9 @@ back to any `AMBIENT_*` variables.
 
 ## Reporting, dispatch, and bridge
 
-The `factory:*` labels and `factory-fingerprint`, `factory-since`, and `factory-request` issue markers are preserved.
+The issue labels are now `garage:*` (formerly `factory:*`). Garage still reads `factory:X` as `garage:X` and writes only
+`garage:*`; run `garage labels migrate --project <name>` (dry run) and then with `--apply` to relabel open issues.
+The `factory-fingerprint`, `factory-since`, and `factory-request` issue markers and `factory.*` event types are preserved.
 Dispatch migrates the legacy ledger once: if the Garage ledger is absent and the configured `legacy_ledger` exists,
 it is read using the existing schema; the next save writes the new Garage ledger and never modifies the legacy file.
 Fix prompts now take checks, test-kit instructions, and app-specific prompt rules from the manifest.

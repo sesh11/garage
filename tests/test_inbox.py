@@ -9,7 +9,7 @@ from test_report import sample_incident
 
 from garage.ui import create_app
 from garage.store import Store
-from garage.report import READY, REQUEST, RequestLogger, IncidentReporter
+from garage.report import REQUEST, PROPOSED, RequestLogger, IncidentReporter
 from garage.tracker import IssueRecord
 from garage_sdk.api import ClientKind, SubmitWork, json_schemas
 from garage.requests import RequestBridge
@@ -127,8 +127,8 @@ async def test_filing_retry_and_status(tmp_path: Path) -> None:
         tracker.fail_create = False
         retry = await client.post("/v1/items", json={"id": "x", "text": "hello"})
         assert retry.status_code == 200
-        assert retry.json()["state"] == "approved"
-        assert tracker.issues[0].labels == [REQUEST, READY]
+        assert retry.json()["state"] == "awaiting_approval"
+        assert tracker.issues[0].labels == [REQUEST, PROPOSED]
         item_id = retry.json()["id"]
         running = (await client.get(f"/v1/items/{item_id}")).json()
         assert running["state"] == "running"

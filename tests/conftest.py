@@ -20,6 +20,17 @@ class FakeTracker:
         self.calls: list[str] = []
         self.labels: dict[str, tuple[str, str]] = {}
         self.fail_create = False
+        self.actors: dict[tuple[int, str], str] = {}
+
+    async def last_actor(self, number: int, event: str, label: str | None = None) -> str | None:
+        return self.actors.get((number, event))
+
+    async def changed_since(
+        self, since: datetime, etag: str | None = None
+    ) -> tuple[list[IssueRecord], str | None, bool]:
+        self.calls.append("changed_since")
+        found = [issue for issue in self.issues if (issue.updated_at or issue.created_at) >= since]
+        return sorted(found, key=lambda issue: issue.updated_at or issue.created_at), None, False
 
     async def ensure_labels(self, labels: dict[str, tuple[str, str]]) -> None:
         self.calls.append("ensure_labels")
@@ -54,6 +65,7 @@ class FakeTracker:
         title: str | None = None,
         body: str | None = None,
         state: str | None = None,
+        state_reason: str | None = None,
     ) -> IssueRecord:
         self.calls.append("update_issue")
         issue = next(item for item in self.issues if item.number == number)
@@ -64,6 +76,9 @@ class FakeTracker:
             update["body"] = body
         if state is not None:
             update["state"] = state
+        if state_reason is not None:
+            update["state_reason"] = state_reason
+        update["updated_at"] = datetime.now(timezone.utc)
         updated = issue.model_copy(update=update)
         self.issues[self.issues.index(issue)] = updated
         self.mutations.append("update")
@@ -73,12 +88,14 @@ class FakeTracker:
         self.calls.append("add_labels")
         issue = next(item for item in self.issues if item.number == number)
         issue.labels = list(dict.fromkeys([*issue.labels, *labels]))
+        issue.updated_at = datetime.now(timezone.utc)
         self.mutations.append("add_labels")
 
     async def remove_label(self, number: int, label: str) -> None:
         self.calls.append("remove_label")
         issue = next(item for item in self.issues if item.number == number)
         issue.labels = [item for item in issue.labels if item != label]
+        issue.updated_at = datetime.now(timezone.utc)
         self.mutations.append("remove_label")
 
     async def comment(self, number: int, body: str) -> None:

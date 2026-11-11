@@ -28,7 +28,7 @@ async def test_offline_report_and_dispatch_dry_run(tmp_path) -> None:
     tracker = FakeTracker()
     reporter = IncidentReporter(tracker, dry_run=True)
     report_actions = await reporter.sync(incidents)
-    assert report_actions and report_actions[0].startswith("open [factory:incident")
+    assert report_actions and report_actions[0].startswith("open [garage:incident")
     assert not tracker.mutations
 
     tracker.issues.append(

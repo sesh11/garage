@@ -17,6 +17,18 @@
   dispatch records, local agent runs, and session tags carry the project. The CLI (`projects`, `items --project`,
   `assign`, `--project` on `report`/`dispatch`) and dashboard filter by project. A single manifest is a one-project
   setup.
+- Approval gate: new issues (requests, incidents at their threshold, and issues people open on GitHub) are labeled
+  `garage:proposed` and wait in the inbox as `awaiting_approval`. Approve by adding `garage:ready-for-fix` on
+  GitHub, the dashboard's Approve button, or `garage approve <id>`; decline by closing the issue, Decline, or
+  `garage decline <id>`. All three update the same issue and inbox record. `garage ask --project <name> "..."` files
+  a proposed request. The issue watcher (`GARAGE_INTAKE=1` in `garage serve`, or `garage intake`) polls each
+  project's repository every 60 seconds with ETags and skips pull requests, closed issues, issues an agent already
+  has, below-threshold incidents, and issues older than its start. Dispatch starts only approved issues and never
+  one declined in Garage. `[policy].needs_approval` without `"triage"` turns the gate off.
+- Decision log: every approve/decline is recorded in Garage with who (the GitHub login for label or close
+  decisions), when, and where; `garage log <id>`, the dashboard Inbox, and `/api/items/<id>/history` show it.
+- Label namespace: Garage writes only `garage:*` labels and still reads old `factory:*` labels as their `garage:`
+  equivalents. `garage labels migrate --project <name>` lists open issues with old labels; `--apply` relabels them.
 - Root Ruff, mypy, and pytest checks cover the service and SDK.
 
 ## Not implemented yet
@@ -25,8 +37,12 @@
 - Automatic routing: Garage does not guess an ask's project. Asks with no project wait in `needs_repo` until
   `garage assign` (or `POST /v1/items/{id}/project`) names one.
 - Projects spanning several repositories. Each project has one repository; the API's `repos` list leaves room.
-- Approval before dispatch: ready issues in any project still dispatch when dispatch is enabled.
-- There is no triage, plan, release, or confirm workflow. `policy.auto_accept` is parsed but ignored.
+- The PM/design (triage and plan) step. Approved items go straight to dispatch; `next_step()` in
+  `src/garage/approval.py` is the hook where a plan step will slot in before dispatch.
+- GitHub webhooks for instant intake; the watcher polls instead, since webhooks need Garage reachable from the
+  internet.
+- Approval for release (`"release"` in `[policy].needs_approval` is not used yet).
+- There is no release or confirm workflow. `policy.auto_accept` is parsed but ignored.
 - Test kits only add text to the dispatch prompt; there is no test runner.
 - The robot kit now targets `ambient-reachy-hw-test` from ambient-devices against an isolated core worktree. It is prompt
   text only and is not hardware-verified by Garage.

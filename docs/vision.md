@@ -370,20 +370,20 @@ Release itself is a HITL step in v0: a human approves after reviewing 5a and 5b.
 
 ## 3. The issue lifecycle
 
-The tracker (GitHub issues today) is where people see the loop. Current `factory:observed`, `factory:ready-for-fix`, `factory:dispatched` and `factory:fixing`
+The tracker (GitHub issues today) is where people see the loop. Current `garage:observed`, `garage:ready-for-fix`, `garage:dispatched` and `garage:fixing`
 labels are kept; the proposal adds triage and release labels. See the README for today's exact transitions.
 
 ```
-new ask / factory:observed incident
-    → factory:triage                       (PM step recommends; human decides)
-        ↘ factory:needs-info  ↘ factory:backlog  ↘ closed as declined (with reason)
-    → factory:planning → factory:ready-for-fix   (plan approved = ready)
-    → factory:dispatched / factory:fixing
-    → factory:testing → factory:released → closed (confirmed)
+new ask / garage:observed incident
+    → garage:triage                       (PM step recommends; human decides)
+        ↘ garage:needs-info  ↘ garage:backlog  ↘ closed as declined (with reason)
+    → garage:planning → garage:ready-for-fix   (plan approved = ready)
+    → garage:dispatched / garage:fixing
+    → garage:testing → garage:released → closed (confirmed)
                                          ↘ reopened (came back on new version)
 ```
 
-Today bridge requests skip straight to `factory:ready-for-fix` with `factory:request`. Under this spec they go through
+Today bridge requests skip straight to `garage:ready-for-fix` with `garage:request`. Under this spec they go through
 triage and plan approval like any other ask.
 
 ## 4. What goes where
@@ -469,8 +469,9 @@ Test kits only supply prompt text: even the example robot kit is not executed or
 6. What evidence must a test runner validate before permitting release?
 
 Naming and packaging are settled for this draft: Garage is the service, `garage-sdk` is the independent SDK
-distribution in `packages/garage-sdk`, and apps configure `garage.toml`. Existing `factory:*` labels,
-`factory.*` event types and issue markers remain unchanged for compatibility.
+distribution in `packages/garage-sdk`, and apps configure `garage.toml`. Issue labels are `garage:*`
+(old `factory:*` labels are still read as their `garage:` equivalents); `factory.*` event types and issue markers
+remain unchanged for compatibility.
 
 ## 8. Next steps (after this spec is agreed)
 

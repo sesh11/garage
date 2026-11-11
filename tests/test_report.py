@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from conftest import FakeTracker
 
-from garage.report import READY, REQUEST, INCIDENT, OBSERVED, RequestLogger, IncidentReporter
+from garage.report import REQUEST, INCIDENT, OBSERVED, PROPOSED, RequestLogger, IncidentReporter
 from garage.requests import Request
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
@@ -36,7 +36,7 @@ async def test_incident_report_preserves_labels_and_fingerprint() -> None:
     actions = await reporter.sync([sample_incident()])
     issue = tracker.issues[0]
     assert actions[0].startswith("open #1")
-    assert issue.labels == [INCIDENT, READY]
+    assert issue.labels == [INCIDENT, PROPOSED]
     assert "<!-- factory-fingerprint: error:abc123 -->" in issue.body
     assert "Filed automatically by garage (Report)" in issue.body
 
@@ -46,7 +46,7 @@ async def test_report_dry_run_prints_would_file_without_mutation() -> None:
     tracker = FakeTracker()
     reporter = IncidentReporter(tracker, dry_run=True)
     actions = await reporter.sync([sample_incident()])
-    assert actions[0].startswith("open [factory:incident, factory:ready-for-fix]")
+    assert actions[0].startswith("open [garage:incident, garage:proposed]")
     assert not tracker.mutations
 
 
@@ -72,7 +72,7 @@ async def test_request_body_title_target_and_duplicate_id() -> None:
     issue = await logger.file(request)
     assert issue is not None
     assert issue.title.startswith("Request: ")
-    assert issue.labels == [REQUEST, READY]
+    assert issue.labels == [REQUEST, PROPOSED]
     assert OBSERVED not in issue.labels
     assert f"<!-- factory-request: {request.id} -->" in issue.body
     assert "Filed automatically by garage." in issue.body
