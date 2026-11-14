@@ -29,6 +29,38 @@ def records(path: Path) -> list[DispatchRecord]:
 
 
 @pytest.mark.asyncio
+async def test_failed_superseded_pr_close_does_not_interrupt_new_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker, agent = FakeTracker(), FakeAgent()
+    tracker.issues.append(issue(1))
+    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    await dispatcher.poll_once()
+    tracker.open_pull_request(pr(10))
+    finish_devin(agent, "s1", pr(10))
+    await dispatcher.poll_once()
+    tracker.issues[0].labels.remove(DISPATCHED)
+    original = tracker.close_pull_request
+    calls = 0
+
+    async def flaky(url: str, comment: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("close failed")
+        await original(url, comment)
+
+    monkeypatch.setattr(tracker, "close_pull_request", flaky)
+    await dispatcher.poll_once()
+    old, new = records(tmp_path)
+    assert old.outcome == "superseded" and old.pr_state == "open"
+    assert new.labeled and DISPATCHED in tracker.issues[0].labels
+    await dispatcher.poll_once()
+    assert records(tmp_path)[0].pr_state == "closed"
+    assert tracker.pull_requests[pr(10)].state == "closed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("deferred", [False, True])
 async def test_failed_manual_replacement_preserves_previous_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deferred: bool

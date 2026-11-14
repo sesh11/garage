@@ -332,6 +332,10 @@ class Dispatcher:
     async def _refresh_pull_requests(self, ledger: DispatchLedger) -> None:
         changed = False
         for record in self._own(ledger):
+            if record.outcome == "superseded":
+                if not self.dry_run:
+                    changed = await self._close_superseded(record, record.issue) or changed
+                continue
             if not record.done or record.outcome is not None:
                 continue
             try:
@@ -492,22 +496,32 @@ class Dispatcher:
         for earlier in self._own(ledger):
             if earlier is record or earlier.issue != issue.number:
                 continue
-            if earlier.pr_url and earlier.pr_state in (None, "open") and earlier.outcome != "merged":
-                pr_repo = pull_request_repo(earlier.pr_url)
-                if pr_repo is None or pr_repo.lower() != repo.lower():
-                    logger.warning("Not closing pull request outside repository %s: %s", repo, earlier.pr_url)
-                else:
-                    await self.tracker.close_pull_request(
-                        earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
-                    )
-                    earlier.pr_state = "closed"
-                    self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
+            await self._close_superseded(earlier, issue.number)
             if earlier.outcome is None:
                 earlier.outcome = "superseded"
         self._save_ledger(ledger)
         self._emit("factory.dispatched", "factory", issue=issue.number, session_id=created.session_id)
         await self._label(ledger, record)
         return f"started {created.url} for #{issue.number}: {issue.title}"
+
+    async def _close_superseded(self, record: DispatchRecord, issue_number: int) -> bool:
+        if not record.pr_url or record.pr_state not in (None, "open") or record.outcome == "merged":
+            return False
+        repo = self.tracker.repo
+        pr_repo = pull_request_repo(record.pr_url)
+        if pr_repo is None or pr_repo.lower() != repo.lower():
+            logger.warning("Not closing pull request outside repository %s: %s", repo, record.pr_url)
+            return False
+        try:
+            await self.tracker.close_pull_request(
+                record.pr_url, f"Superseded by a new Garage attempt for #{issue_number}."
+            )
+        except Exception as exc:
+            logger.warning("Could not close superseded pull request %s: %s", record.pr_url, _error_detail(exc))
+            return False
+        record.pr_state = "closed"
+        self._emit("factory.dispatch_pr_closed", "factory", issue=issue_number, pr_url=record.pr_url)
+        return True
 
     async def _label(self, ledger: DispatchLedger, record: DispatchRecord) -> None:
         await self.tracker.add_labels(record.issue, [DISPATCHED, FIXING])
