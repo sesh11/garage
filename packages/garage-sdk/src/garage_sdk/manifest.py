@@ -65,7 +65,7 @@ class DispatchSection(BaseModel):
     outpost: str | None = None
     legacy_ledger: str | None = None
     prompt_rules: list[str] = Field(default_factory=list)
-    max_open: int = Field(default=1, ge=1)
+    max_open: int = Field(default=10, ge=1)
 
     @field_validator("base_branch")
     @classmethod

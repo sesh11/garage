@@ -48,6 +48,7 @@ def finish_devin(agent: FakeAgent, session_id: str, pr_url: str | None) -> None:
 
 
 def dispatcher_for(tmp_path: Path, tracker: FakeTracker, agent: FakeAgent, **options: Any) -> Dispatcher:
+    options.setdefault("max_open", 1)
     return Dispatcher(
         tracker,
         agent,
@@ -210,7 +211,7 @@ def _projects_file(tmp_path: Path) -> list[GarageSettings]:
     )
     projects = tmp_path / "projects.toml"
     projects.write_text(
-        '[[project]]\nname = "garage"\nrepo = "sesh11/garage"\n\n'
+        '[[project]]\nname = "garage"\nrepo = "sesh11/garage"\nmax_open = 1\n\n'
         f'[[project]]\nname = "ambient-home"\nmanifest = "{manifest}"\nmax_open = 2\n\n'
         f'[[project]]\nname = "other"\nrepo = "sesh11/other"\nmanifest = "{manifest}"\n',
         encoding="utf-8",
@@ -226,7 +227,7 @@ def test_projects_file_max_open_wins_over_the_manifest(tmp_path: Path) -> None:
 
 
 def test_max_open_env_override_and_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert settings_from_env(example_manifest()).max_open == 1
+    assert settings_from_env(example_manifest()).max_open == 10
     monkeypatch.setenv("GARAGE_MAX_OPEN", "4")
     assert settings_from_env(example_manifest()).max_open == 4
     assert {settings.max_open for settings in _projects_file(tmp_path)} == {4}

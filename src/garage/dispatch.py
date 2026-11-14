@@ -199,7 +199,7 @@ class Dispatcher:
         legacy_ledger_path: Path | None = None,
         project: str | None = None,
         hold: Callable[[IssueRecord], str | None] | None = None,
-        max_open: int = 1,
+        max_open: int = 10,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
         if max_open < 1:

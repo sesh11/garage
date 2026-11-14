@@ -47,7 +47,7 @@ class GarageSettings:
     ledger_path: Path | None = None
     intake: bool = False
     intake_interval_s: float = 60
-    max_open: int = 1
+    max_open: int = 10
 
     @property
     def needs_approval(self) -> bool:
