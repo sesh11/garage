@@ -63,8 +63,9 @@ async def test_partial_retry_write_does_not_reset_attempt_counter(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
 async def test_failed_superseded_pr_close_does_not_interrupt_new_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool
 ) -> None:
     tracker, agent = FakeTracker(), FakeAgent()
     tracker.issues.append(issue(1))
@@ -73,7 +74,10 @@ async def test_failed_superseded_pr_close_does_not_interrupt_new_session(
     tracker.open_pull_request(pr(10))
     finish_devin(agent, "s1", pr(10))
     await dispatcher.poll_once()
-    tracker.issues[0].labels.remove(DISPATCHED)
+    if failed:
+        tracker.checks[pr(10)] = [CheckRecord(name="test", completed=True, conclusion="failure")]
+    else:
+        tracker.issues[0].labels.remove(DISPATCHED)
     original = tracker.close_pull_request
     calls = 0
 
@@ -87,7 +91,8 @@ async def test_failed_superseded_pr_close_does_not_interrupt_new_session(
     monkeypatch.setattr(tracker, "close_pull_request", flaky)
     await dispatcher.poll_once()
     old, new = records(tmp_path)
-    assert old.outcome == "superseded" and old.pr_state == "open"
+    assert old.outcome == ("failed" if failed else "superseded")
+    assert old.pr_state == "open"
     assert new.labeled and DISPATCHED in tracker.issues[0].labels
     await dispatcher.poll_once()
     assert records(tmp_path)[0].pr_state == "closed"

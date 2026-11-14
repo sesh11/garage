@@ -331,8 +331,10 @@ class Dispatcher:
 
     async def _refresh_pull_requests(self, ledger: DispatchLedger) -> None:
         changed = False
-        for record in self._own(ledger):
-            if record.outcome == "superseded":
+        own = self._own(ledger)
+        newest = {record.issue: record for record in own}
+        for record in own:
+            if record is not newest[record.issue]:
                 if not self.dry_run:
                     changed = await self._close_superseded(record, record.issue) or changed
                 continue
