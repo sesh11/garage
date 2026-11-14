@@ -90,6 +90,16 @@ class GitHubIssues:
                     found.setdefault(int(str(item["number"])), _record(item))
         return [found[number] for number in sorted(found)]
 
+    async def get_issue(self, number: int) -> IssueRecord | None:
+        """Return one issue or pull request by number; None when GitHub has no such number (404 or 410)."""
+        try:
+            response = await self._request("GET", f"{self._repo_path}/issues/{number}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (404, 410):
+                return None
+            raise
+        return _record(response.json())
+
     async def _pages(self, url: str | None) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
         while url:

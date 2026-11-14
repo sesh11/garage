@@ -8,6 +8,7 @@ import pytest
 from garage.tracker import IssueRecord
 from garage.agents.base import SessionState, SessionStatus, CreatedSession
 from garage.agents.devin import DevinClient
+from garage.agents.local import LocalAgent
 
 
 class FakeTracker:
@@ -39,6 +40,10 @@ class FakeTracker:
     async def list_issues(self, label: str) -> list[IssueRecord]:
         self.calls.append(f"list_issues:{label}")
         return [issue for issue in self.issues if label in issue.labels]
+
+    async def get_issue(self, number: int) -> IssueRecord | None:
+        self.calls.append(f"get_issue:{number}")
+        return next((issue for issue in self.issues if issue.number == number), None)
 
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
         self.calls.append("create_issue")
@@ -148,6 +153,48 @@ class FakeAgent:
     @staticmethod
     def map_status(status: str, status_detail: str) -> SessionStatus | None:
         return DevinClient.map_status(status, status_detail)
+
+
+class FakeLocalAgent(FakeAgent):
+    """Shaped like the local Claude Code / Codex agent: file:// run URLs, Garage's own status names, and the agent
+    (not the model) opening the pull request, so the PR shows up only on the finished session."""
+
+    async def create_session(
+        self,
+        prompt: str,
+        *,
+        title: str,
+        tags: list[str],
+        structured_output_schema: dict[str, object],
+        repos: list[str] | None = None,
+        platform: str | None = None,
+    ) -> CreatedSession:
+        created = await super().create_session(
+            prompt,
+            title=title,
+            tags=tags,
+            structured_output_schema=structured_output_schema,
+            repos=repos,
+            platform=platform,
+        )
+        self.states[created.session_id] = SessionState(session_id=created.session_id, status="working")
+        return CreatedSession(
+            session_id=created.session_id, url=f"file:///runs/{created.session_id}", status="working"
+        )
+
+    def finish(self, session_id: str, pr_url: str | None, summary: str = "Done.") -> None:
+        self.states[session_id] = SessionState.model_validate(
+            {
+                "session_id": session_id,
+                "status": "finished",
+                "structured_output": {"summary": summary, "pr_url": pr_url, "test_result": "passed", "risk": "low"},
+                "pull_requests": [{"pr_url": pr_url}] if pr_url else [],
+            }
+        )
+
+    @staticmethod
+    def map_status(status: str, status_detail: str) -> SessionStatus | None:
+        return LocalAgent.map_status(status, status_detail)
 
 
 def example_manifest() -> Path:
