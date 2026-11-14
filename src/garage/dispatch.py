@@ -16,7 +16,7 @@ from pydantic import Field, BaseModel
 
 from garage_sdk import emit, scrub_text
 from garage.report import READY, FIXING, LABELS, BLOCKED, DISPATCHED
-from garage.tracker import Tracker, IssueRecord, canonical_label
+from garage.tracker import Tracker, IssueRecord, canonical_label, pull_request_repo
 from garage_sdk.events import EventLevel
 from garage.agents.base import CodingAgent, SessionStatus
 from garage.agents.local import LocalCapacityError
@@ -496,11 +496,15 @@ class Dispatcher:
             if earlier is record or earlier.issue != issue.number:
                 continue
             if earlier.pr_url and earlier.pr_state in (None, "open") and earlier.outcome != "merged":
-                await self.tracker.close_pull_request(
-                    earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
-                )
-                earlier.pr_state = "closed"
-                self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
+                pr_repo = pull_request_repo(earlier.pr_url)
+                if pr_repo is None or pr_repo.lower() != repo.lower():
+                    logger.warning("Not closing pull request outside repository %s: %s", repo, earlier.pr_url)
+                else:
+                    await self.tracker.close_pull_request(
+                        earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
+                    )
+                    earlier.pr_state = "closed"
+                    self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
             if earlier.outcome is None:
                 earlier.outcome = "superseded"
         self._save_ledger(ledger)

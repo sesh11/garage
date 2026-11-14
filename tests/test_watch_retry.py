@@ -347,6 +347,9 @@ async def test_github_checks_pagination_statuses_and_close() -> None:
         assert [check.name for check in checks if check.failed] == ["test", "failure", "error"]
         assert not checks[1].completed and not checks[3].completed
         assert await github.list_checks(pull.model_copy(update={"head_sha": None})) == []
+        with pytest.raises(ValueError, match="Invalid pull request URL"):
+            await github.close_pull_request(pull.url, "Superseded.")
+        github.repo = "OTHER/REPO"
         await github.close_pull_request(pull.url, "Superseded.")
         assert calls[-2:] == [("POST", "/repos/other/repo/issues/1/comments"), ("PATCH", "/repos/other/repo/pulls/1")]
 
@@ -356,3 +359,20 @@ async def test_github_checks_pagination_statuses_and_close() -> None:
 )
 def test_failed_conclusions(conclusion: str) -> None:
     assert CheckRecord(name="test", completed=True, conclusion=conclusion).failed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_repo", [False, True])
+async def test_dispatch_only_closes_own_repository_prs(tmp_path: Path, same_repo: bool) -> None:
+    tracker, agent = FakeTracker(), FakeAgent()
+    tracker.issues.append(issue(1))
+    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    await dispatcher.poll_once()
+    url = pr(10, tracker.repo.upper() if same_repo else "someone/else")
+    tracker.open_pull_request(url)
+    finish_devin(agent, "s1", url)
+    await dispatcher.poll_once()
+    tracker.issues[0].labels.remove(DISPATCHED)
+    await dispatcher.poll_once()
+    assert tracker.pull_requests[url].state == ("closed" if same_repo else "open")
+    assert records(tmp_path)[0].pr_state == ("closed" if same_repo else "open")

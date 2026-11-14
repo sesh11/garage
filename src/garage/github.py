@@ -149,7 +149,7 @@ class GitHubIssues:
     async def close_pull_request(self, url: str, comment: str) -> None:
         """Comment on the PR in its own repository before closing it."""
         match = _PULL_URL.match(url)
-        if not match:
+        if not match or match["repo"].lower() != self.repo.lower():
             raise ValueError(f"Invalid pull request URL: {url}")
         path = f"/repos/{match['repo']}"
         await self._request("POST", f"{path}/issues/{match['number']}/comments", {"body": comment})

@@ -11,6 +11,12 @@ LABEL_PREFIX = "garage:"
 LEGACY_LABEL_PREFIX = "factory:"
 
 
+def pull_request_repo(url: str) -> str | None:
+    """Return the repository named by a GitHub pull request URL."""
+    match = re.match(r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/\d+(?:/|$)", url, re.IGNORECASE)
+    return match[1] if match else None
+
+
 def canonical_label(name: str) -> str:
     """Read a label under its current name: ``factory:X`` (the old prefix) is the same label as ``garage:X``."""
     return LABEL_PREFIX + name.removeprefix(LEGACY_LABEL_PREFIX) if name.startswith(LEGACY_LABEL_PREFIX) else name
