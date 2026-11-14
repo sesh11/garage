@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from garage.tracker import IssueRecord
+from garage.tracker import IssueRecord, PullRequestRecord
 from garage.agents.base import SessionState, SessionStatus, CreatedSession
 from garage.agents.devin import DevinClient
 from garage.agents.local import LocalAgent
@@ -22,6 +22,16 @@ class FakeTracker:
         self.labels: dict[str, tuple[str, str]] = {}
         self.fail_create = False
         self.actors: dict[tuple[int, str], str] = {}
+        self.pull_requests: dict[str, PullRequestRecord] = {}
+
+    def open_pull_request(self, url: str) -> PullRequestRecord:
+        record = PullRequestRecord(url=url, number=int(url.rstrip("/").rsplit("/", 1)[-1]), state="open")
+        self.pull_requests[url] = record
+        return record
+
+    async def get_pull_request(self, url: str) -> PullRequestRecord | None:
+        self.calls.append(f"get_pull_request:{url}")
+        return self.pull_requests.get(url)
 
     async def last_actor(self, number: int, event: str, label: str | None = None) -> str | None:
         return self.actors.get((number, event))

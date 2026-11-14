@@ -28,6 +28,9 @@
 - Order: `Depends on #N` lines in an issue body (`src/garage/dependencies.py`) hold a ready issue until every
   same-repository dependency is closed as completed; declined, missing, cross-repository, self and cyclic
   dependencies hold it with a reason. Garage comments once per held issue.
+- Cap: `[dispatch].max_open` (default 10; a projects-file `max_open` wins; `GARAGE_MAX_OPEN` overrides both) limits
+  each project's issues in flight: a running session, or a finished one whose pull request is still open
+  (`Tracker.get_pull_request`, saved as `pr_state` in the ledger). Other ready issues wait, lowest number first.
 - Decision log: every approve/decline is recorded in Garage with who (the GitHub login for label or close
   decisions), when, and where; `garage log <id>`, the dashboard Inbox, and `/api/items/<id>/history` show it.
 - Label namespace: Garage writes only `garage:*` labels and still reads old `factory:*` labels as their `garage:`

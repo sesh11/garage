@@ -48,6 +48,15 @@ class IssueRecord(BaseModel):
         return None
 
 
+class PullRequestRecord(BaseModel):
+    """The parts of a pull request Garage watches: ``state`` is ``open``, ``closed`` (not merged) or ``merged``."""
+
+    url: str
+    number: int
+    state: str
+    head_sha: str | None = None
+
+
 class Tracker(Protocol):
     """Issue operations used by Garage reporting and dispatch."""
 
@@ -63,6 +72,10 @@ class Tracker(Protocol):
 
     async def get_issue(self, number: int) -> IssueRecord | None:
         """Return one issue (or pull request) by number, or None if it does not exist."""
+        ...
+
+    async def get_pull_request(self, url: str) -> PullRequestRecord | None:
+        """Return a pull request's state from its web URL, or None if it does not exist."""
         ...
 
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
