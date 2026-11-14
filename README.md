@@ -60,6 +60,8 @@ hidden issue-body markers (`<!-- factory-fingerprint: ... -->`) and the `legacy_
   It saves the session in its ledger before adding **both** `garage:dispatched` and `garage:fixing`.
   This path does not remove ready-for-fix. On session completion it comments with the outcome and removes fixing,
   leaving dispatched; removing dispatched allows another attempt.
+- Order: a ready issue whose body has a `Depends on #12` (or `Depends on: #12, #15`) line waits until every
+  issue it names is closed as completed. See [Order](#order-depends-on-n).
 - Separately, `POST /api/requests/{number}/fixing` calls `RequestLogger.mark_fixing` through the bridge:
   it adds `garage:fixing` and removes `garage:ready-for-fix`.
 - The reporter reopens a closed incident when samples newer than its closure appear, resetting observed/ready/fixing
@@ -129,6 +131,30 @@ Dispatch (`garage dispatch`, or `garage serve` with `GARAGE_DISPATCH=1`) only st
 in the same `garage serve` immediately; a GitHub or terminal approval wakes it on the watcher's next poll. An approved item is also where a future plan step will fit: `next_step()` in
 `src/garage/approval.py` returns `"dispatch"` today, and a PM/design step would return `"plan"` there and hold the
 issue until its plan is approved.
+
+### Order: "Depends on #N"
+
+Approve a batch of issues and give them an order by writing dependencies in each issue's body:
+
+```text
+Depends on #12
+Depends on: #15, #16
+```
+
+The phrase is case-insensitive and may appear on several lines; `owner/repo#N` and full issue URLs also work if
+they name the same repository. The dispatcher holds a ready issue until every issue it depends on is closed as
+completed (an issue closed with no reason, as older GitHub issues are, counts as completed). It also holds it, with
+the reason, when a dependency:
+
+- was closed as "not planned" (or as a duplicate),
+- does not exist, or is a pull request,
+- is in another repository (only same-repository dependencies are supported),
+- is the issue itself, or leads back to it (a cycle such as `#5 -> #6 -> #5`).
+
+Holds show in the dispatch output (`hold #13: waiting on #12 (still open)`). The first time an issue is held for a
+dependency, Garage comments once on it saying what it waits on; the ledger remembers that comment, so restarts do
+not repeat it. Each dependency is read from GitHub at most once per poll. Issues without a `Depends on` line are
+dispatched as before.
 
 ## Quick start
 

@@ -69,6 +69,9 @@ class _OfflineTracker:
     async def list_issues(self, label: str) -> list[IssueRecord]:
         return []
 
+    async def get_issue(self, number: int) -> IssueRecord | None:
+        return None
+
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
         raise RuntimeError("offline tracker cannot create issues")
 

@@ -19,6 +19,7 @@ from garage.tracker import Tracker, IssueRecord
 from garage_sdk.events import EventLevel
 from garage.agents.base import CodingAgent, SessionStatus
 from garage.agents.local import LocalCapacityError
+from garage.dependencies import DependencyCheck
 from garage_sdk.manifest import Manifest
 
 
@@ -63,6 +64,7 @@ class DispatchLedger(BaseModel):
     """Every dispatch this machine has made, newest last."""
 
     records: list[DispatchRecord] = Field(default_factory=list)
+    dependency_holds: dict[int, str] = Field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> DispatchLedger:
@@ -260,13 +262,17 @@ class Dispatcher:
         if not self._labels_ready and not self.dry_run:
             await self.tracker.ensure_labels(LABELS)
             self._labels_ready = True
-        for issue in sorted(await self.tracker.list_issues(READY), key=lambda item: item.number):
-            action = await self._consider(ledger, issue)
+        ready = sorted(await self.tracker.list_issues(READY), key=lambda item: item.number)
+        dependencies = DependencyCheck(
+            self.tracker.repo, self.tracker.get_issue, known={issue.number: issue for issue in ready}
+        )
+        for issue in ready:
+            action = await self._consider(ledger, issue, dependencies)
             if action:
                 done.append(action)
         return done
 
-    async def _consider(self, ledger: DispatchLedger, issue: IssueRecord) -> str | None:
+    async def _consider(self, ledger: DispatchLedger, issue: IssueRecord, dependencies: DependencyCheck) -> str | None:
         if issue.state != "open" or DISPATCHED in issue.labels:
             return None
         record = ledger.latest(issue.number)
@@ -278,9 +284,26 @@ class Dispatcher:
         reason = self.hold(issue) if self.hold is not None else None
         if reason is not None:
             return f"hold #{issue.number}: {reason}"
+        reason = await dependencies.hold(issue)
+        if reason is not None:
+            if not self.dry_run and issue.number not in ledger.dependency_holds:
+                await self._note_dependency_hold(ledger, issue.number, reason)
+            return f"hold #{issue.number}: {reason}"
         if self.dry_run:
             return f"start session for #{issue.number}: {issue.title}"
+        if ledger.dependency_holds.pop(issue.number, None) is not None:
+            self._save_ledger(ledger)
         return await self._dispatch(ledger, issue)
+
+    async def _note_dependency_hold(self, ledger: DispatchLedger, number: int, reason: str) -> None:
+        await self.tracker.comment(
+            number,
+            f"Not starting yet: {reason}.\n\n"
+            "Garage starts it once every issue named on a `Depends on` line is closed as completed.",
+        )
+        ledger.dependency_holds[number] = reason
+        self._save_ledger(ledger)
+        self._emit("factory.dispatch_waiting", "factory", issue=number, reason=reason)
 
     async def _dispatch(self, ledger: DispatchLedger, issue: IssueRecord) -> str | None:
         repo = self.tracker.repo

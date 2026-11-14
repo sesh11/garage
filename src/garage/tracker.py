@@ -61,6 +61,10 @@ class Tracker(Protocol):
         """Return issues carrying a label."""
         ...
 
+    async def get_issue(self, number: int) -> IssueRecord | None:
+        """Return one issue (or pull request) by number, or None if it does not exist."""
+        ...
+
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
         """Create an issue."""
         ...
