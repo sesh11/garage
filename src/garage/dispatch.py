@@ -466,19 +466,6 @@ class Dispatcher:
         previous = next((record for record in reversed(self._own(ledger)) if record.issue == issue.number), None)
         attempt = previous.attempt + 1 if previous and previous.outcome == "failed" else 1
         try:
-            for earlier in ledger.records:
-                if earlier.issue != issue.number or earlier.project not in (None, self.project):
-                    continue
-                if earlier.pr_url and earlier.pr_state in (None, "open") and earlier.outcome != "merged":
-                    await self.tracker.close_pull_request(
-                        earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
-                    )
-                    earlier.pr_state = "closed"
-                    self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
-                if earlier.outcome is None:
-                    earlier.outcome = "superseded"
-            if previous is not None:
-                self._save_ledger(ledger)
             created = await self.agent.create_session(
                 build_fix_prompt(issue, repo, self.manifest),
                 title=f"Fix #{issue.number}: {scrub_text(issue.title)}"[:80],
@@ -504,6 +491,18 @@ class Dispatcher:
             attempt=attempt,
         )
         ledger.records.append(record)
+        self._save_ledger(ledger)
+        for earlier in self._own(ledger):
+            if earlier is record or earlier.issue != issue.number:
+                continue
+            if earlier.pr_url and earlier.pr_state in (None, "open") and earlier.outcome != "merged":
+                await self.tracker.close_pull_request(
+                    earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
+                )
+                earlier.pr_state = "closed"
+                self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
+            if earlier.outcome is None:
+                earlier.outcome = "superseded"
         self._save_ledger(ledger)
         self._emit("factory.dispatched", "factory", issue=issue.number, session_id=created.session_id)
         await self._label(ledger, record)

@@ -24,10 +24,36 @@ from garage.dispatch import (
 )
 from garage.projects import load_projects
 from garage.settings import settings_from_env
+from garage.agents.local import LocalCapacityError
 
 
 def records(path: Path) -> list[DispatchRecord]:
     return DispatchLedger.load(path / "dispatch.json").records
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deferred", [False, True])
+async def test_failed_manual_replacement_preserves_previous_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deferred: bool
+) -> None:
+    tracker, agent = FakeTracker(), FakeAgent()
+    tracker.issues.append(issue(1))
+    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    await dispatcher.poll_once()
+    tracker.open_pull_request(pr(10))
+    finish_devin(agent, "s1", pr(10))
+    await dispatcher.poll_once()
+    tracker.issues[0].labels.remove(DISPATCHED)
+
+    async def broken(*args: object, **kwargs: object) -> None:
+        raise LocalCapacityError("full") if deferred else RuntimeError("start failed")
+
+    monkeypatch.setattr(agent, "create_session", broken)
+    await dispatcher.poll_once()
+    assert len(records(tmp_path)) == 1
+    assert records(tmp_path)[0].outcome is None
+    assert records(tmp_path)[0].in_flight
+    assert tracker.pull_requests[pr(10)].state == "open"
 
 
 @pytest.mark.asyncio
