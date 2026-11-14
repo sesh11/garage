@@ -48,7 +48,7 @@ class GarageSettings:
     intake: bool = False
     intake_interval_s: float = 60
     max_open: int = 10
-    max_attempts: int = 2
+    max_attempts: int = 5
 
     @property
     def needs_approval(self) -> bool:

@@ -234,7 +234,7 @@ class Dispatcher:
         project: str | None = None,
         hold: Callable[[IssueRecord], str | None] | None = None,
         max_open: int = 10,
-        max_attempts: int = 2,
+        max_attempts: int = 5,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
         if max_open < 1:

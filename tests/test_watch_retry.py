@@ -157,7 +157,7 @@ async def test_retry_blocking_and_manual_fresh_attempt(tmp_path: Path, local: bo
     tracker = FakeTracker()
     tracker.issues.append(issue(1))
     agent = FakeLocalAgent() if local else FakeAgent()
-    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    dispatcher = dispatcher_for(tmp_path, tracker, agent, max_attempts=2)
     await dispatcher.poll_once()
     for attempt in (1, 2):
         url = pr(10 + attempt)
@@ -330,7 +330,7 @@ def test_settings_projects_precedence_and_validation(tmp_path: Path, monkeypatch
         f'[[project]]\nname="a"\nrepo="o/a"\nmanifest="{manifest}"\nmax_attempts=1\n[[project]]\nname="b"\nrepo="o/b"\nmanifest="{manifest}"\n'
     )
     assert [item.max_attempts for item in load_projects(projects)] == [1, 3]
-    assert settings_from_env(example_manifest()).max_attempts == 2
+    assert settings_from_env(example_manifest()).max_attempts == 5
     monkeypatch.setenv("GARAGE_MAX_ATTEMPTS", "4")
     assert {item.max_attempts for item in load_projects(projects)} == {4}
     monkeypatch.setenv("GARAGE_MAX_ATTEMPTS", "0")

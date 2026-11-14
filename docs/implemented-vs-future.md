@@ -35,7 +35,7 @@
   decisions), when, and where; `garage log <id>`, the dashboard Inbox, and `/api/items/<id>/history` show it.
 - Watch and retry: finished attempts watch PR merges, closes, check runs and legacy commit statuses. Merges close
   open issues as completed. Failed checks, closed PRs and sessions without a PR retry up to `[dispatch].max_attempts`
-  (default 2; projects-file value wins; `GARAGE_MAX_ATTEMPTS` globally overrides). Retry context replaces a bounded
+  (default 5; projects-file value wins; `GARAGE_MAX_ATTEMPTS` globally overrides). Retry context replaces a bounded
   block at the top of the issue body, and Garage closes the old PR before starting a fresh session. Exhaustion adds
   `garage:blocked`; removing it starts fresh. Ledger state survives restarts; legacy completed sessions are not retried.
 - Label namespace: Garage writes only `garage:*` labels and still reads old `factory:*` labels as their `garage:`
