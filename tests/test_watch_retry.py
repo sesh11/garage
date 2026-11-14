@@ -29,6 +29,28 @@ def records(path: Path) -> list[DispatchRecord]:
 
 
 @pytest.mark.asyncio
+async def test_partial_retry_write_does_not_reset_attempt_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker, agent = FakeTracker(), FakeAgent()
+    tracker.issues.append(issue(1))
+    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    await dispatcher.poll_once()
+    finish_devin(agent, "s1", None)
+    original = tracker.remove_label
+
+    async def partially_successful(number: int, label: str) -> None:
+        await original(number, label)
+        if label == DISPATCHED:
+            raise RuntimeError("response lost after removing label")
+
+    monkeypatch.setattr(tracker, "remove_label", partially_successful)
+    await dispatcher.poll_once()
+    assert records(tmp_path)[-1].attempt == 2
+    assert len(agent.created) == 2
+
+
+@pytest.mark.asyncio
 async def test_failed_superseded_pr_close_does_not_interrupt_new_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -465,7 +465,10 @@ class Dispatcher:
     async def _dispatch(self, ledger: DispatchLedger, issue: IssueRecord) -> str | None:
         repo = self.tracker.repo
         previous = next((record for record in reversed(self._own(ledger)) if record.issue == issue.number), None)
-        attempt = previous.attempt + 1 if previous and previous.outcome == "failed" else 1
+        retry = previous is not None and (
+            previous.outcome == "failed" or (previous.outcome is None and previous.done and previous.attempt >= 1)
+        )
+        attempt = previous.attempt + 1 if previous is not None and retry else 1
         try:
             created = await self.agent.create_session(
                 build_fix_prompt(issue, repo, self.manifest),
