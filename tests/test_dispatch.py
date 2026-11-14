@@ -129,6 +129,7 @@ async def test_dispatches_requests_and_migrates_legacy_ledger(tmp_path) -> None:
         manifest=settings.manifest,
         interval_s=60,
         dry_run=False,
+        max_open=2,
         legacy_ledger_path=legacy_path,
     )
     ledger = dispatcher._load_ledger()

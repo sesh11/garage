@@ -62,6 +62,8 @@ hidden issue-body markers (`<!-- factory-fingerprint: ... -->`) and the `legacy_
   leaving dispatched; removing dispatched allows another attempt.
 - Order: a ready issue whose body has a `Depends on #12` (or `Depends on: #12, #15`) line waits until every
   issue it names is closed as completed. See [Order](#order-depends-on-n).
+- Cap: each project has at most `max_open` issues in flight (default 1); other ready issues wait, lowest number
+  first. See [One at a time](#one-at-a-time-max_open).
 - Separately, `POST /api/requests/{number}/fixing` calls `RequestLogger.mark_fixing` through the bridge:
   it adds `garage:fixing` and removes `garage:ready-for-fix`.
 - The reporter reopens a closed incident when samples newer than its closure appear, resetting observed/ready/fixing
@@ -156,6 +158,20 @@ dependency, Garage comments once on it saying what it waits on; the ledger remem
 not repeat it. Each dependency is read from GitHub at most once per poll. Issues without a `Depends on` line are
 dispatched as before.
 
+### One at a time: `max_open`
+
+Each project starts at most `max_open` issues at once; the default is 1. An issue is in flight while its session
+runs, and after that while its pull request is still open. When the pull request is merged or closed, or the
+session ends without one, the slot frees and the next ready issue starts on the following poll. Ready issues are
+considered lowest number first, so with `Depends on` lines and the default cap a batch runs one issue at a time,
+in order. Waiting issues show as holds in the dispatch output, e.g.
+`hold #14: waiting for a free slot: 1 of 1 in flight in project garage (#13)`; there is no comment for this hold.
+
+Set it in the manifest (`[dispatch].max_open = 2`) or on a projects-file entry (`max_open = 2`, which wins over
+the manifest). `GARAGE_MAX_OPEN` overrides both for every project. Caps are per project: one project's work never
+holds another's. The pull request's state is read from GitHub once per poll until it is merged or closed, and saved
+in the ledger (`pr_state`); if it cannot be read, the issue keeps its slot.
+
 ## Quick start
 
 ### Install from Git
@@ -231,7 +247,8 @@ the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_RE
 `GARAGE_GITHUB_TOKEN` enables issue mutations, while `DEVIN_API_KEY` and `DEVIN_ORG_ID` enable dispatch. Additional
 settings include `GARAGE_MAX_NEW_ISSUES_PER_DAY`, `GARAGE_DISPATCH_INTERVAL`, `GARAGE_LOOKBACK`,
 `GARAGE_POLL_INTERVAL`, `GARAGE_INTAKE` (watch new issues, default off), `GARAGE_INTAKE_INTERVAL` (default `60s`),
-`GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_BRIDGE_TOKEN`, and
+`GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_MAX_OPEN` (issues in flight per project; overrides
+`[dispatch].max_open`, default 1), `GARAGE_BRIDGE_TOKEN`, and
 `GARAGE_LOG_LEVEL` (default `INFO`).
 Manifest `[dispatch].base_branch` selects the branch fixes start from and pull requests target; it defaults to `main`.
 
@@ -259,6 +276,7 @@ agent = "claude-code"           # devin, claude-code, or codex
 base_branch = "main"
 check = ["uv run pytest -q"]    # commands the agent is told to run before opening a PR
 prompt_rules = ["Keep packages/garage-sdk/src changes additive."]
+max_open = 1                    # issues in flight at once (default 1)
 
 [[project]]
 name = "ambient-home"

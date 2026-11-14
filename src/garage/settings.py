@@ -47,6 +47,7 @@ class GarageSettings:
     ledger_path: Path | None = None
     intake: bool = False
     intake_interval_s: float = 60
+    max_open: int = 1
 
     @property
     def needs_approval(self) -> bool:
@@ -82,6 +83,13 @@ def _int_env(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    value = _int_env(name, default)
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return value
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -164,4 +172,5 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
         project=manifest.app.id,
         intake=_bool_env("GARAGE_INTAKE", False),
         intake_interval_s=_duration_env("GARAGE_INTAKE_INTERVAL", "60s"),
+        max_open=_positive_int_env("GARAGE_MAX_OPEN", manifest.dispatch.max_open),
     )

@@ -6,10 +6,11 @@ from urllib.parse import quote
 
 import httpx
 
-from garage.tracker import IssueRecord, legacy_label, canonical_label
+from garage.tracker import IssueRecord, PullRequestRecord, legacy_label, canonical_label
 
 
 _NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
+_PULL_URL = re.compile(r"https?://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/pull/(?P<number>\d+)", re.IGNORECASE)
 
 
 def _record(payload: dict[str, object]) -> IssueRecord:
@@ -99,6 +100,27 @@ class GitHubIssues:
                 return None
             raise
         return _record(response.json())
+
+    async def get_pull_request(self, url: str) -> PullRequestRecord | None:
+        """Return the state of the pull request at a github.com URL; None for other URLs or a missing PR."""
+        match = _PULL_URL.match(url.strip())
+        if match is None:
+            return None
+        try:
+            response = await self._request("GET", f"/repos/{match.group('repo')}/pulls/{match.group('number')}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (404, 410):
+                return None
+            raise
+        payload = response.json()
+        head = payload.get("head")
+        state = "merged" if payload.get("merged") or payload.get("merged_at") else str(payload["state"])
+        return PullRequestRecord(
+            url=str(payload.get("html_url") or url),
+            number=int(payload["number"]),
+            state=state,
+            head_sha=str(head["sha"]) if isinstance(head, dict) and head.get("sha") else None,
+        )
 
     async def _pages(self, url: str | None) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []

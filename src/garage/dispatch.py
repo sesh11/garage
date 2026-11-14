@@ -51,6 +51,12 @@ class DispatchRecord(BaseModel):
     done: bool = False
     status: str | None = None
     pr_url: str | None = None
+    pr_state: str | None = None
+
+    @property
+    def in_flight(self) -> bool:
+        """Whether this attempt still holds one of its project's slots: session running, or its PR still open."""
+        return not self.done or (self.pr_url is not None and self.pr_state in (None, "open"))
 
     @property
     def public_reference(self) -> str:
@@ -193,9 +199,13 @@ class Dispatcher:
         legacy_ledger_path: Path | None = None,
         project: str | None = None,
         hold: Callable[[IssueRecord], str | None] | None = None,
+        max_open: int = 1,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
+        if max_open < 1:
+            raise ValueError("max_open must be at least 1")
         self.project = project
+        self.max_open = max_open
         self.hold = hold
         self.tracker = tracker
         self.agent = agent
@@ -259,6 +269,7 @@ class Dispatcher:
         """Follow up on running sessions, then dispatch new ready issues."""
         ledger = self._load_ledger()
         done = await self._follow_up(ledger)
+        await self._refresh_pull_requests(ledger)
         if not self._labels_ready and not self.dry_run:
             await self.tracker.ensure_labels(LABELS)
             self._labels_ready = True
@@ -266,13 +277,53 @@ class Dispatcher:
         dependencies = DependencyCheck(
             self.tracker.repo, self.tracker.get_issue, known={issue.number: issue for issue in ready}
         )
+        planned: list[int] = []
         for issue in ready:
-            action = await self._consider(ledger, issue, dependencies)
+            action = await self._consider(ledger, issue, dependencies, planned)
             if action:
                 done.append(action)
         return done
 
-    async def _consider(self, ledger: DispatchLedger, issue: IssueRecord, dependencies: DependencyCheck) -> str | None:
+    def _current(self, ledger: DispatchLedger) -> dict[int, DispatchRecord]:
+        """Return the newest record of each issue in this project."""
+        latest: dict[int, DispatchRecord] = {}
+        for record in ledger.records:
+            if record.project in (None, self.project):
+                latest[record.issue] = record
+        return latest
+
+    def in_flight(self, ledger: DispatchLedger) -> list[int]:
+        """Issues holding one of this project's ``max_open`` slots, lowest first."""
+        return sorted(number for number, record in self._current(ledger).items() if record.in_flight)
+
+    async def _refresh_pull_requests(self, ledger: DispatchLedger) -> None:
+        changed = False
+        for record in self._current(ledger).values():
+            if not record.done or record.pr_url is None or record.pr_state not in (None, "open"):
+                continue
+            try:
+                pull = await self.tracker.get_pull_request(record.pr_url)
+            except Exception as exc:
+                logger.warning("Could not read pull request %s: %s", record.pr_url, _error_detail(exc))
+                continue
+            state = pull.state if pull is not None else "missing"
+            if state != record.pr_state:
+                record.pr_state = state
+                changed = True
+        if changed and not self.dry_run:
+            self._save_ledger(ledger)
+
+    def _cap_hold(self, ledger: DispatchLedger, planned: list[int]) -> str | None:
+        busy = sorted({*self.in_flight(ledger), *planned})
+        if len(busy) < self.max_open:
+            return None
+        where = f" in project {self.project}" if self.project else ""
+        refs = ", ".join(f"#{number}" for number in busy)
+        return f"waiting for a free slot: {len(busy)} of {self.max_open} in flight{where} ({refs})"
+
+    async def _consider(
+        self, ledger: DispatchLedger, issue: IssueRecord, dependencies: DependencyCheck, planned: list[int]
+    ) -> str | None:
         if issue.state != "open" or DISPATCHED in issue.labels:
             return None
         record = ledger.latest(issue.number)
@@ -289,7 +340,11 @@ class Dispatcher:
             if not self.dry_run and issue.number not in ledger.dependency_holds:
                 await self._note_dependency_hold(ledger, issue.number, reason)
             return f"hold #{issue.number}: {reason}"
+        reason = self._cap_hold(ledger, planned)
+        if reason is not None:
+            return f"hold #{issue.number}: {reason}"
         if self.dry_run:
+            planned.append(issue.number)
             return f"start session for #{issue.number}: {issue.title}"
         if ledger.dependency_holds.pop(issue.number, None) is not None:
             self._save_ledger(ledger)
