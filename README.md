@@ -59,7 +59,8 @@ hidden issue-body markers (`<!-- factory-fingerprint: ... -->`) and the `legacy_
 - `Dispatcher` in `src/garage/dispatch.py` starts sessions for open ready issues without `garage:dispatched`.
   It saves the session in its ledger before adding **both** `garage:dispatched` and `garage:fixing`.
   This path does not remove ready-for-fix. On session completion it comments with the outcome and removes fixing,
-  leaving dispatched; removing dispatched allows another attempt.
+  then watches its pull request. Failed attempts are retried up to `max_attempts` (default 2).
+  `garage:blocked` means retries stopped; remove it to allow a fresh attempt.
 - Order: a ready issue whose body has a `Depends on #12` (or `Depends on: #12, #15`) line waits until every
   issue it names is closed as completed. See [Order](#order-depends-on-n).
 - Cap: each project has at most `max_open` issues in flight (default 10); other ready issues wait, lowest number
@@ -68,7 +69,7 @@ hidden issue-body markers (`<!-- factory-fingerprint: ... -->`) and the `legacy_
   it adds `garage:fixing` and removes `garage:ready-for-fix`.
 - The reporter reopens a closed incident when samples newer than its closure appear, resetting observed/ready/fixing
   based on the fresh count. It does not clear dispatched. This is recurrence reporting, not post-release
-  confirmation: Garage does not merge, deploy, or close issues as confirmed fixed.
+  confirmation: Garage closes issues when their PR merges, but never merges or deploys itself.
 
 ## Approval: nothing starts until you say yes
 
@@ -172,6 +173,25 @@ the manifest). `GARAGE_MAX_OPEN` overrides both for every project. Caps are per 
 holds another's. The pull request's state is read from GitHub once per poll until it is merged or closed, and saved
 in the ledger (`pr_state`); if it cannot be read, the issue keeps its slot.
 
+### Watch and retry
+
+After a session finishes, Garage watches its PR each poll. A merge records `merged` and closes the issue as
+completed with a short comment. A close without merge, all checks finished with any failures, or no PR means
+the attempt failed. Pending checks, green checks awaiting merge, and repositories with no checks keep watching;
+with no checks, only a merge or close decides.
+
+`[dispatch].max_attempts` defaults to 2 and must be at least 1. A projects-file `max_attempts` wins over the
+manifest; `GARAGE_MAX_ATTEMPTS` overrides both globally. Before retrying, Garage replaces a "Previous attempt"
+block at the top of the issue body (under 1500 characters, including the failure, summary and PR URL), comments
+once, and removes `garage:dispatched`. Before the next session starts, Garage closes any older open PR for
+that issue. All agents start fresh from the latest base and open a new PR.
+
+At the limit, Garage adds `garage:blocked`, removes dispatched, comments once and leaves the PR for a human.
+Blocked/failed attempts do not hold a cap slot. Removing blocked allows a fresh attempt 1. Attempts, summaries,
+PR state and outcomes are saved in the ledger, so watching continues after a service restart. Completed records
+from older Garage versions only refresh PR state, avoiding mass retries on upgrade; still-running old sessions
+become attempt 1 when they finish. A session that cannot start is not an attempt.
+
 ## Quick start
 
 ### Install from Git
@@ -248,7 +268,8 @@ the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_RE
 settings include `GARAGE_MAX_NEW_ISSUES_PER_DAY`, `GARAGE_DISPATCH_INTERVAL`, `GARAGE_LOOKBACK`,
 `GARAGE_POLL_INTERVAL`, `GARAGE_INTAKE` (watch new issues, default off), `GARAGE_INTAKE_INTERVAL` (default `60s`),
 `GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_MAX_OPEN` (issues in flight per project; overrides
-`[dispatch].max_open`, default 10), `GARAGE_BRIDGE_TOKEN`, and
+`[dispatch].max_open`, default 10), `GARAGE_MAX_ATTEMPTS` (overrides `[dispatch].max_attempts` for all projects,
+default 2), `GARAGE_BRIDGE_TOKEN`, and
 `GARAGE_LOG_LEVEL` (default `INFO`).
 Manifest `[dispatch].base_branch` selects the branch fixes start from and pull requests target; it defaults to `main`.
 
@@ -277,6 +298,7 @@ base_branch = "main"
 check = ["uv run pytest -q"]    # commands the agent is told to run before opening a PR
 prompt_rules = ["Keep packages/garage-sdk/src changes additive."]
 max_open = 10                   # issues in flight at once (default 10)
+max_attempts = 2                # attempts before garage:blocked (default 2)
 
 [[project]]
 name = "ambient-home"

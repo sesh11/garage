@@ -31,7 +31,9 @@ READY = "garage:ready-for-fix"
 PROPOSED = "garage:proposed"
 FIXING = "garage:fixing"
 DISPATCHED = "garage:dispatched"
+BLOCKED = "garage:blocked"
 LABELS: dict[str, tuple[str, str]] = {
+    BLOCKED: ("b60205", "Garage stopped retrying; remove to allow a fresh attempt"),
     INCIDENT: ("5319e7", "Filed automatically from an incident the app detected"),
     REQUEST: ("1d76db", "Fix or feature request submitted through the bridge"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),

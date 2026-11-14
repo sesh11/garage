@@ -318,11 +318,13 @@ async def test_dispatch_comments_hide_local_paths(repo: Path, tmp_path: Path, fa
     assert record.session_url.startswith("file://")
     assert (await finish(runner, record.session_id)).status == "finished"
     await dispatcher.poll_once()
-    assert len(tracker.comments) == 2
-    for _, body in tracker.comments:
+    assert len(tracker.comments) == 4
+    for _, body in tracker.comments[:2]:
         assert f"local run {record.session_id}, branch garage/{record.session_id}" in body
         assert "file:" not in body
         assert str(tmp_path) not in body
+    assert "Attempt 1 failed: no pull request" in tracker.comments[2][1]
+    assert "Started a coding-agent fix session: local run" in tracker.comments[3][1]
 
 
 async def test_publish_commits_pushes_and_reuses_pr(repo: Path, tmp_path: Path, fake_cli: Path) -> None:

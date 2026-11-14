@@ -57,10 +57,31 @@ class PullRequestRecord(BaseModel):
     head_sha: str | None = None
 
 
+class CheckRecord(BaseModel):
+    """One check run or legacy commit status."""
+
+    name: str
+    completed: bool
+    conclusion: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        """Whether the check ended unsuccessfully."""
+        return self.conclusion in {"failure", "error", "timed_out", "cancelled", "action_required", "startup_failure"}
+
+
 class Tracker(Protocol):
     """Issue operations used by Garage reporting and dispatch."""
 
     repo: str
+
+    async def list_checks(self, pull: PullRequestRecord) -> list[CheckRecord]:
+        """Return check runs and legacy statuses on the pull request's head."""
+        ...
+
+    async def close_pull_request(self, url: str, comment: str) -> None:
+        """Comment on a pull request, then close it."""
+        ...
 
     async def ensure_labels(self, labels: dict[str, tuple[str, str]]) -> None:
         """Ensure all named labels exist."""

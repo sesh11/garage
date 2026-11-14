@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import os
+import re
 import json
 import asyncio
 import logging
@@ -14,8 +15,8 @@ import httpx
 from pydantic import Field, BaseModel
 
 from garage_sdk import emit, scrub_text
-from garage.report import READY, FIXING, LABELS, DISPATCHED
-from garage.tracker import Tracker, IssueRecord
+from garage.report import READY, FIXING, LABELS, BLOCKED, DISPATCHED
+from garage.tracker import Tracker, IssueRecord, canonical_label
 from garage_sdk.events import EventLevel
 from garage.agents.base import CodingAgent, SessionStatus
 from garage.agents.local import LocalCapacityError
@@ -52,11 +53,17 @@ class DispatchRecord(BaseModel):
     status: str | None = None
     pr_url: str | None = None
     pr_state: str | None = None
+    attempt: int = 0
+    outcome: str | None = None
+    failure: str | None = None
+    summary: str | None = None
 
     @property
     def in_flight(self) -> bool:
         """Whether this attempt still holds one of its project's slots: session running, or its PR still open."""
-        return not self.done or (self.pr_url is not None and self.pr_state in (None, "open"))
+        return self.outcome is None and (
+            not self.done or (self.pr_url is not None and self.pr_state in (None, "open"))
+        )
 
     @property
     def public_reference(self) -> str:
@@ -92,6 +99,26 @@ class DispatchLedger(BaseModel):
         return next((record for record in reversed(self.records) if record.issue == issue), None)
 
 
+ATTEMPTS_START = "<!-- garage-attempts:start -->"
+ATTEMPTS_END = "<!-- garage-attempts:end -->"
+_ATTEMPTS = re.compile(re.escape(ATTEMPTS_START) + r".*?" + re.escape(ATTEMPTS_END) + r"\s*", re.DOTALL)
+
+
+def attempt_block(record: DispatchRecord, max_attempts: int) -> str:
+    """Render bounded, scrubbed context for the next attempt."""
+    prefix = f"{ATTEMPTS_START}\n### Previous attempt\nAttempt {record.attempt} of {max_attempts}\n"
+    failure = scrub_text(record.failure or "unknown failure")[:500]
+    suffix = f"\nPR: {scrub_text(record.pr_url or 'none')[:400]}\n{ATTEMPTS_END}"
+    prefix += f"Failed: {failure}\nSummary: "
+    summary = scrub_text(record.summary or "none")
+    return prefix + summary[: 1499 - len(prefix) - len(suffix)] + suffix
+
+
+def replace_attempt_block(body: str, block: str) -> str:
+    """Keep exactly one attempts block, before the original issue body."""
+    return block + "\n\n" + _ATTEMPTS.sub("", body).lstrip()
+
+
 def _replace_prompt_values(text: str, *, repo: str, issue: int, outpost: str, command: str = "") -> str:
     return (
         text.replace("{repo}", repo)
@@ -103,7 +130,11 @@ def _replace_prompt_values(text: str, *, repo: str, issue: int, outpost: str, co
 
 def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
     """Build a scrubbed, manifest-driven prompt for a coding-agent fix session."""
-    body = scrub_text(issue.body).strip()
+    body = (
+        "\n".join(scrub_text(line) for line in issue.body.splitlines())
+        if ATTEMPTS_START in issue.body
+        else scrub_text(issue.body)
+    ).strip()
     if len(body) > MAX_BODY_CHARS:
         body = body[:MAX_BODY_CHARS] + "\n[... truncated]"
     outpost = manifest.dispatch.outpost or ""
@@ -121,6 +152,12 @@ def build_fix_prompt(issue: IssueRecord, repo: str, manifest: Manifest) -> str:
         f"- Work only in {repo}. Branch off the latest {base} and open ONE pull request into {base} "
         f"with 'Closes #{issue.number}' in its body. Never merge, never push directly to {protected}, never deploy.",
     ]
+    if ATTEMPTS_START in issue.body:
+        lines.append(
+            '- An earlier attempt failed (see "Previous attempt" at the top of the issue body). '
+            "Garage closed its pull request; start fresh from the latest base, open a NEW pull request, "
+            "and fix what failed."
+        )
     checks = manifest.build.check
     if checks:
         rendered = [f"`{command}`" for command in checks]
@@ -200,10 +237,14 @@ class Dispatcher:
         project: str | None = None,
         hold: Callable[[IssueRecord], str | None] | None = None,
         max_open: int = 10,
+        max_attempts: int = 2,
     ) -> None:
         """Configure the tracker, agent, ledger, and polling behavior."""
         if max_open < 1:
             raise ValueError("max_open must be at least 1")
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        self.max_attempts = max_attempts
         self.project = project
         self.max_open = max_open
         self.hold = hold
@@ -258,7 +299,7 @@ class Dispatcher:
         record = self._load_ledger().latest(number)
         if record is None:
             return {"state": "queued", "session_url": None, "pr_url": None}
-        state = (record.status or "finished") if record.done else "working"
+        state = record.outcome or ((record.status or "finished") if record.done else "working")
         return {
             "state": state,
             "session_url": record.session_url,
@@ -294,19 +335,77 @@ class Dispatcher:
     async def _refresh_pull_requests(self, ledger: DispatchLedger) -> None:
         changed = False
         for record in self._own(ledger):
-            if not record.done or record.pr_url is None or record.pr_state not in (None, "open"):
+            if not record.done or record.outcome is not None:
                 continue
             try:
-                pull = await self.tracker.get_pull_request(record.pr_url)
-            except Exception as exc:
-                logger.warning("Could not read pull request %s: %s", record.pr_url, _error_detail(exc))
-                continue
-            state = pull.state if pull is not None else "missing"
-            if state != record.pr_state:
-                record.pr_state = state
+                if record.attempt == 0:
+                    if record.pr_url and record.pr_state in (None, "open"):
+                        pull = await self.tracker.get_pull_request(record.pr_url)
+                        record.pr_state = pull.state if pull else "missing"
+                        changed = True
+                    continue
+                pull = await self.tracker.get_pull_request(record.pr_url) if record.pr_url else None
+                record.pr_state = pull.state if pull else "missing"
                 changed = True
+                if self.dry_run:
+                    continue
+                if pull and pull.state == "merged":
+                    issue = await self.tracker.get_issue(record.issue)
+                    if issue and issue.state == "open":
+                        await self.tracker.comment(record.issue, f"Merged: {record.pr_url}. Closing as completed.")
+                        await self.tracker.update_issue(record.issue, state="closed", state_reason="completed")
+                    record.outcome = "merged"
+                    self._save_ledger(ledger)
+                    self._emit("factory.dispatch_merged", "factory", issue=record.issue, pr_url=record.pr_url)
+                    continue
+                failure = None
+                if not record.pr_url:
+                    failure = "no pull request"
+                elif not pull or pull.state == "closed":
+                    failure = "pull request closed without merging"
+                else:
+                    checks = await self.tracker.list_checks(pull)
+                    if checks and all(check.completed for check in checks) and any(check.failed for check in checks):
+                        failure = "checks failed: " + ", ".join(check.name for check in checks if check.failed)
+                if failure:
+                    issue = await self.tracker.get_issue(record.issue)
+                    await self._attempt_failed(ledger, record, failure, issue)
+            except Exception as exc:
+                logger.warning("Could not watch issue #%s: %s", record.issue, _error_detail(exc))
+                continue
         if changed and not self.dry_run:
             self._save_ledger(ledger)
+
+    async def _attempt_failed(
+        self, ledger: DispatchLedger, record: DispatchRecord, failure: str, issue: IssueRecord | None
+    ) -> None:
+        record.outcome = "failed"
+        record.failure = failure
+        self._save_ledger(ledger)
+        self._emit(
+            "factory.dispatch_attempt_failed", "factory", issue=record.issue, attempt=record.attempt, failure=failure
+        )
+        if issue is None or issue.state != "open":
+            return
+        if record.attempt < self.max_attempts:
+            await self.tracker.update_issue(
+                record.issue, body=replace_attempt_block(issue.body, attempt_block(record, self.max_attempts))
+            )
+            await self.tracker.comment(
+                record.issue, f"Attempt {record.attempt} failed: {failure}. Starting attempt {record.attempt + 1}."
+            )
+            await self.tracker.remove_label(record.issue, DISPATCHED)
+            self._emit("factory.dispatch_retry", "factory", issue=record.issue, attempt=record.attempt + 1)
+        else:
+            await self.tracker.add_labels(record.issue, [BLOCKED])
+            await self.tracker.remove_label(record.issue, DISPATCHED)
+            record.outcome = "blocked"
+            await self.tracker.comment(
+                record.issue,
+                f"Attempt {record.attempt} failed: {failure}. Remove `{BLOCKED}` to allow a fresh attempt.",
+            )
+            self._save_ledger(ledger)
+            self._emit("factory.dispatch_blocked", "factory", issue=record.issue, attempt=record.attempt)
 
     def _cap_hold(self, ledger: DispatchLedger, issue: int, planned: list[int]) -> str | None:
         busy = sorted({*self.in_flight(ledger), *planned})
@@ -319,9 +418,11 @@ class Dispatcher:
     async def _consider(
         self, ledger: DispatchLedger, issue: IssueRecord, dependencies: DependencyCheck, planned: list[int]
     ) -> str | None:
+        if BLOCKED in {canonical_label(label) for label in issue.labels}:
+            return None
         if issue.state != "open" or DISPATCHED in issue.labels:
             return None
-        record = ledger.latest(issue.number)
+        record = next((record for record in reversed(self._own(ledger)) if record.issue == issue.number), None)
         if record is not None and not record.labeled:
             if self.dry_run:
                 return f"label #{issue.number} (session already started: {record.session_url})"
@@ -357,7 +458,22 @@ class Dispatcher:
 
     async def _dispatch(self, ledger: DispatchLedger, issue: IssueRecord) -> str | None:
         repo = self.tracker.repo
+        previous = next((record for record in reversed(self._own(ledger)) if record.issue == issue.number), None)
+        attempt = previous.attempt + 1 if previous and previous.outcome == "failed" else 1
         try:
+            for earlier in ledger.records:
+                if earlier.issue != issue.number or earlier.project not in (None, self.project):
+                    continue
+                if earlier.pr_url and earlier.pr_state in (None, "open") and earlier.outcome != "merged":
+                    await self.tracker.close_pull_request(
+                        earlier.pr_url, f"Superseded by a new Garage attempt for #{issue.number}."
+                    )
+                    earlier.pr_state = "closed"
+                    self._emit("factory.dispatch_pr_closed", "factory", issue=issue.number, pr_url=earlier.pr_url)
+                if earlier.outcome is None:
+                    earlier.outcome = "superseded"
+            if previous is not None:
+                self._save_ledger(ledger)
             created = await self.agent.create_session(
                 build_fix_prompt(issue, repo, self.manifest),
                 title=f"Fix #{issue.number}: {scrub_text(issue.title)}"[:80],
@@ -380,6 +496,7 @@ class Dispatcher:
             session_url=created.url,
             started_at=self.clock(),
             project=self.project,
+            attempt=attempt,
         )
         ledger.records.append(record)
         self._save_ledger(ledger)
@@ -403,7 +520,7 @@ class Dispatcher:
         if self.dry_run:
             return done
         for record in ledger.records:
-            if record.done or not record.labeled:
+            if record.project not in (None, self.project) or record.done or not record.labeled:
                 continue
             try:
                 session = await self.agent.get_session(record.session_id)
@@ -439,6 +556,8 @@ class Dispatcher:
             record.done = True
             record.status = status.value
             record.pr_url = pr_url
+            record.attempt = record.attempt or 1
+            record.summary = scrub_text(summary) if isinstance(summary, str) else None
             self._save_ledger(ledger)
             self._emit(
                 "factory.dispatch_ended", "factory", issue=record.issue, status=status.value, has_pr=bool(pr_url)

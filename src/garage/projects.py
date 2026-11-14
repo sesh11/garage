@@ -44,6 +44,7 @@ class ProjectEntry(BaseModel):
     check: list[str] | None = None
     prompt_rules: list[str] | None = None
     max_open: int | None = Field(default=None, ge=1)
+    max_attempts: int | None = Field(default=None, ge=1)
 
     @field_validator("name")
     @classmethod
@@ -119,6 +120,7 @@ def _manifest_for(entry: ProjectEntry, base: Path) -> tuple[Manifest, Path]:
                 ("base_branch", entry.base_branch),
                 ("prompt_rules", entry.prompt_rules),
                 ("max_open", entry.max_open),
+                ("max_attempts", entry.max_attempts),
             )
             if value is not None
         }

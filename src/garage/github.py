@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 import httpx
 
-from garage.tracker import IssueRecord, PullRequestRecord, legacy_label, canonical_label
+from garage.tracker import CheckRecord, IssueRecord, PullRequestRecord, legacy_label, canonical_label
 
 
 _NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
@@ -122,11 +122,46 @@ class GitHubIssues:
             head_sha=str(head["sha"]) if isinstance(head, dict) and head.get("sha") else None,
         )
 
-    async def _pages(self, url: str | None) -> list[dict[str, object]]:
+    async def list_checks(self, pull: PullRequestRecord) -> list[CheckRecord]:
+        """Read check runs and legacy statuses from the PR repository."""
+        match = _PULL_URL.match(pull.url)
+        if not match or not pull.head_sha:
+            return []
+        path = f"/repos/{match['repo']}/commits/{quote(pull.head_sha, safe='')}"
+        runs = await self._pages(f"{path}/check-runs?per_page=100", key="check_runs")
+        statuses = await self._pages(f"{path}/status?per_page=100", key="statuses")
+        return [
+            CheckRecord(
+                name=str(run["name"]),
+                completed=run.get("status") == "completed",
+                conclusion=str(run["conclusion"]) if run.get("conclusion") is not None else None,
+            )
+            for run in runs
+        ] + [
+            CheckRecord(
+                name=str(status["context"]),
+                completed=status.get("state") != "pending",
+                conclusion=str(status["state"]),
+            )
+            for status in statuses
+        ]
+
+    async def close_pull_request(self, url: str, comment: str) -> None:
+        """Comment on the PR in its own repository before closing it."""
+        match = _PULL_URL.match(url)
+        if not match:
+            raise ValueError(f"Invalid pull request URL: {url}")
+        path = f"/repos/{match['repo']}"
+        await self._request("POST", f"{path}/issues/{match['number']}/comments", {"body": comment})
+        await self._request("PATCH", f"{path}/pulls/{match['number']}", {"state": "closed"})
+
+    async def _pages(self, url: str | None, *, key: str | None = None) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
         while url:
             response = await self._request("GET", url)
             payload = response.json()
+            if key is not None:
+                payload = payload.get(key, [])
             if isinstance(payload, list):
                 items.extend(item for item in payload if isinstance(item, dict))
             match = _NEXT.search(response.headers.get("link", ""))
