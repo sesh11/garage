@@ -99,11 +99,11 @@ async def test_merged_pull_request_is_not_read_again(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_earlier_attempt_with_an_open_pull_request_keeps_the_slot(tmp_path: Path) -> None:
+async def test_manual_attempt_supersedes_old_pull_request_and_keeps_the_slot(tmp_path: Path) -> None:
     tracker = FakeTracker()
     tracker.issues += [issue(1), issue(2)]
     agent = FakeAgent()
-    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    dispatcher = dispatcher_for(tmp_path, tracker, agent, max_attempts=1)
     await dispatcher.poll_once()
     tracker.open_pull_request(pr(10))
     finish_devin(agent, "s1", pr(10))
@@ -111,9 +111,10 @@ async def test_earlier_attempt_with_an_open_pull_request_keeps_the_slot(tmp_path
 
     tracker.issues[0].labels.remove(DISPATCHED)
     assert (await dispatcher.poll_once())[0] == "started https://app.devin.ai/sessions/s2 for #1: Issue 1"
-    finish_devin(agent, "s2", None)
+    assert tracker.pull_requests[pr(10)].state == "closed"
+    assert DispatchLedger.load(tmp_path / "dispatch.json").records[0].outcome == "superseded"
     assert (await dispatcher.poll_once())[-1] == "hold #2: waiting for a free slot: 1 of 1 in flight (#1)"
-    tracker.pull_requests[pr(10)].state = "closed"
+    finish_devin(agent, "s2", None)
     assert (await dispatcher.poll_once())[-1] == "started https://app.devin.ai/sessions/s3 for #2: Issue 2"
 
 
@@ -166,7 +167,7 @@ async def test_session_without_a_pull_request_frees_its_slot(tmp_path: Path) -> 
     tracker = FakeTracker()
     tracker.issues += [issue(1), issue(2)]
     agent = FakeAgent()
-    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    dispatcher = dispatcher_for(tmp_path, tracker, agent, max_attempts=1)
     await dispatcher.poll_once()
     finish_devin(agent, "s1", None)
     assert (await dispatcher.poll_once())[-1] == "started https://app.devin.ai/sessions/s2 for #2: Issue 2"
@@ -193,7 +194,7 @@ async def test_local_agent_pull_request_holds_until_closed(tmp_path: Path) -> No
     tracker = FakeTracker()
     tracker.issues += [issue(1), issue(2)]
     agent = FakeLocalAgent()
-    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    dispatcher = dispatcher_for(tmp_path, tracker, agent, max_attempts=1)
 
     assert (await dispatcher.poll_once())[0] == "started file:///runs/s1 for #1: Issue 1"
     tracker.open_pull_request(pr(10))

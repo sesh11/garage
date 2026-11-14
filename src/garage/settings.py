@@ -48,6 +48,7 @@ class GarageSettings:
     intake: bool = False
     intake_interval_s: float = 60
     max_open: int = 10
+    max_attempts: int = 5
 
     @property
     def needs_approval(self) -> bool:
@@ -173,4 +174,5 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
         intake=_bool_env("GARAGE_INTAKE", False),
         intake_interval_s=_duration_env("GARAGE_INTAKE_INTERVAL", "60s"),
         max_open=_positive_int_env("GARAGE_MAX_OPEN", manifest.dispatch.max_open),
+        max_attempts=_positive_int_env("GARAGE_MAX_ATTEMPTS", manifest.dispatch.max_attempts),
     )

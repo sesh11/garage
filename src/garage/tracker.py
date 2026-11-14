@@ -11,6 +11,12 @@ LABEL_PREFIX = "garage:"
 LEGACY_LABEL_PREFIX = "factory:"
 
 
+def pull_request_repo(url: str) -> str | None:
+    """Return the repository named by a GitHub pull request URL."""
+    match = re.match(r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/\d+(?:[/?#]|$)", url, re.IGNORECASE)
+    return match[1] if match else None
+
+
 def canonical_label(name: str) -> str:
     """Read a label under its current name: ``factory:X`` (the old prefix) is the same label as ``garage:X``."""
     return LABEL_PREFIX + name.removeprefix(LEGACY_LABEL_PREFIX) if name.startswith(LEGACY_LABEL_PREFIX) else name
@@ -22,6 +28,20 @@ def legacy_label(name: str) -> str | None:
 
 
 _MARKER = re.compile(r"<!--\s*factory-(?P<key>[a-z-]+):\s*(?P<value>[^\s>]+)\s*-->")
+ATTEMPTS_START = "<!-- garage-attempts:start -->"
+ATTEMPTS_END = "<!-- garage-attempts:end -->"
+_ATTEMPTS = re.compile(re.escape(ATTEMPTS_START) + r".*?" + re.escape(ATTEMPTS_END), re.DOTALL)
+
+
+def extract_attempt_block(body: str) -> str | None:
+    """Return the previous-attempt context, if present."""
+    match = _ATTEMPTS.search(body)
+    return match[0] if match else None
+
+
+def replace_attempt_block(body: str, block: str) -> str:
+    """Keep exactly one attempts block, before the original issue body."""
+    return block + "\n\n" + _ATTEMPTS.sub("", body).lstrip()
 
 
 class IssueRecord(BaseModel):
@@ -57,10 +77,31 @@ class PullRequestRecord(BaseModel):
     head_sha: str | None = None
 
 
+class CheckRecord(BaseModel):
+    """One check run or legacy commit status."""
+
+    name: str
+    completed: bool
+    conclusion: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        """Whether the check ended unsuccessfully."""
+        return self.conclusion in {"failure", "error", "timed_out", "cancelled", "action_required", "startup_failure"}
+
+
 class Tracker(Protocol):
     """Issue operations used by Garage reporting and dispatch."""
 
     repo: str
+
+    async def list_checks(self, pull: PullRequestRecord) -> list[CheckRecord]:
+        """Return check runs and legacy statuses on the pull request's head."""
+        ...
+
+    async def close_pull_request(self, url: str, comment: str) -> None:
+        """Comment on a pull request, then close it."""
+        ...
 
     async def ensure_labels(self, labels: dict[str, tuple[str, str]]) -> None:
         """Ensure all named labels exist."""

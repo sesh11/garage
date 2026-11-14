@@ -30,7 +30,7 @@ from garage.report import (
     RequestLogger,
     IncidentReporter,
 )
-from garage.tracker import Tracker, IssueRecord, PullRequestRecord, canonical_label
+from garage.tracker import Tracker, CheckRecord, IssueRecord, PullRequestRecord, canonical_label
 from garage_sdk.api import ItemKind, IssueLink, ItemState, ClientKind, SubmitWork, json_schemas
 from garage.approval import (
     Approvals,
@@ -74,6 +74,12 @@ class _OfflineTracker:
 
     async def get_pull_request(self, url: str) -> PullRequestRecord | None:
         return None
+
+    async def list_checks(self, pull: PullRequestRecord) -> list[CheckRecord]:
+        return []
+
+    async def close_pull_request(self, url: str, comment: str) -> None:
+        raise RuntimeError("offline tracker cannot close pull requests")
 
     async def create_issue(self, title: str, body: str, labels: list[str]) -> IssueRecord:
         raise RuntimeError("offline tracker cannot create issues")
@@ -188,6 +194,7 @@ def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False, offline
         project=settings.project or None,
         hold=None if offline else dispatch_hold(Store(settings.data_dir / "garage.db"), settings.repo),
         max_open=settings.max_open,
+        max_attempts=settings.max_attempts,
     )
 
 

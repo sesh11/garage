@@ -13,6 +13,8 @@ repo = "sesh11/garage"
 path = "~/code/garage"            # your local checkout; local agents work in a git worktree of it
 agent = "devin"                   # devin, claude-code or codex
 base_branch = "main"
+max_open = 10
+max_attempts = 5
 check = [
   "uv run ruff check .",
   "uv run ruff format --check .",

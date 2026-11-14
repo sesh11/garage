@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pytest
 from conftest import FakeTracker
 
 from garage.report import REQUEST, INCIDENT, OBSERVED, PROPOSED, RequestLogger, IncidentReporter
+from garage.tracker import ATTEMPTS_END, ATTEMPTS_START, replace_attempt_block
 from garage.requests import Request
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
@@ -39,6 +40,23 @@ async def test_incident_report_preserves_labels_and_fingerprint() -> None:
     assert issue.labels == [INCIDENT, PROPOSED]
     assert "<!-- factory-fingerprint: error:abc123 -->" in issue.body
     assert "Filed automatically by garage (Report)" in issue.body
+
+
+@pytest.mark.asyncio
+async def test_incident_updates_preserve_attempt_context_without_redundant_writes() -> None:
+    tracker = FakeTracker()
+    reporter = IncidentReporter(tracker, min_update_interval=timedelta(0))
+    incident = sample_incident()
+    await reporter.sync([incident])
+    block = f"{ATTEMPTS_START}\nPrevious attempt failed: lint\n{ATTEMPTS_END}"
+    tracker.issues[0].body = replace_attempt_block(tracker.issues[0].body, block)
+    before = tracker.mutations.copy()
+    assert await reporter.sync([incident]) == []
+    assert tracker.mutations == before
+    changed = incident.model_copy(update={"count": 3})
+    assert (await reporter.sync([changed]))[0].startswith("update #1")
+    assert tracker.issues[0].body.startswith(block)
+    assert tracker.issues[0].body.count(ATTEMPTS_START) == 1
 
 
 @pytest.mark.asyncio

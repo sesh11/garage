@@ -209,10 +209,12 @@ async def test_order_works_with_a_local_agent(tmp_path) -> None:
     actions = await dispatcher.poll_once()
     assert actions[0] == "started file:///runs/s1 for #1: Issue 1"
     assert actions[1] == "hold #2: waiting on #1 (still open)"
+    tracker.open_pull_request(f"https://github.com/{REPO}/pull/10")
     agent.finish("s1", f"https://github.com/{REPO}/pull/10")
     await dispatcher.poll_once()
     assert len(agent.created) == 1
     close(tracker, 1)
+    tracker.pull_requests[f"https://github.com/{REPO}/pull/10"].state = "merged"
     assert (await dispatcher.poll_once())[0] == "started file:///runs/s2 for #2: Issue 2"
 
 

@@ -291,6 +291,7 @@ async def test_expired_session_with_summary_and_pr_is_finished(tmp_path) -> None
         ),
     )
 
+    tracker.open_pull_request(pr_url)
     await dispatcher.poll_once()
 
     record = dispatcher._load_ledger().records[0]

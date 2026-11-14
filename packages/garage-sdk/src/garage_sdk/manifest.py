@@ -66,6 +66,7 @@ class DispatchSection(BaseModel):
     legacy_ledger: str | None = None
     prompt_rules: list[str] = Field(default_factory=list)
     max_open: int = Field(default=10, ge=1)
+    max_attempts: int = Field(default=5, ge=1)
 
     @field_validator("base_branch")
     @classmethod
