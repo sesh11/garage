@@ -10,7 +10,14 @@ from test_max_open import pr, issue, finish_devin, dispatcher_for
 
 from garage.github import GitHubIssues
 from garage.report import BLOCKED, DISPATCHED
-from garage.tracker import ATTEMPTS_END, ATTEMPTS_START, CheckRecord, PullRequestRecord, replace_attempt_block
+from garage.tracker import (
+    ATTEMPTS_END,
+    ATTEMPTS_START,
+    CheckRecord,
+    PullRequestRecord,
+    pull_request_repo,
+    replace_attempt_block,
+)
 from garage.dispatch import (
     MAX_BODY_CHARS,
     Dispatcher,
@@ -26,6 +33,11 @@ from garage.agents.local import LocalCapacityError
 
 def records(path: Path) -> list[DispatchRecord]:
     return DispatchLedger.load(path / "dispatch.json").records
+
+
+@pytest.mark.parametrize("suffix", ["", "/files", "?foo=1", "#issuecomment-1"])
+def test_pull_request_repo_accepts_url_suffixes(suffix: str) -> None:
+    assert pull_request_repo(f"https://github.com/o/r/pull/5{suffix}") == "o/r"
 
 
 @pytest.mark.asyncio

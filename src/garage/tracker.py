@@ -13,7 +13,7 @@ LEGACY_LABEL_PREFIX = "factory:"
 
 def pull_request_repo(url: str) -> str | None:
     """Return the repository named by a GitHub pull request URL."""
-    match = re.match(r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/\d+(?:/|$)", url, re.IGNORECASE)
+    match = re.match(r"https?://github\.com/([\w.-]+/[\w.-]+)/pull/\d+(?:[/?#]|$)", url, re.IGNORECASE)
     return match[1] if match else None
 
 
