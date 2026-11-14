@@ -284,21 +284,16 @@ class Dispatcher:
                 done.append(action)
         return done
 
-    def _current(self, ledger: DispatchLedger) -> dict[int, DispatchRecord]:
-        """Return the newest record of each issue in this project."""
-        latest: dict[int, DispatchRecord] = {}
-        for record in ledger.records:
-            if record.project in (None, self.project):
-                latest[record.issue] = record
-        return latest
+    def _own(self, ledger: DispatchLedger) -> list[DispatchRecord]:
+        return [record for record in ledger.records if record.project in (None, self.project)]
 
     def in_flight(self, ledger: DispatchLedger) -> list[int]:
-        """Issues holding one of this project's ``max_open`` slots, lowest first."""
-        return sorted(number for number, record in self._current(ledger).items() if record.in_flight)
+        """Issues holding one of this project's ``max_open`` slots (any attempt still in flight), lowest first."""
+        return sorted({record.issue for record in self._own(ledger) if record.in_flight})
 
     async def _refresh_pull_requests(self, ledger: DispatchLedger) -> None:
         changed = False
-        for record in self._current(ledger).values():
+        for record in self._own(ledger):
             if not record.done or record.pr_url is None or record.pr_state not in (None, "open"):
                 continue
             try:
@@ -313,9 +308,9 @@ class Dispatcher:
         if changed and not self.dry_run:
             self._save_ledger(ledger)
 
-    def _cap_hold(self, ledger: DispatchLedger, planned: list[int]) -> str | None:
+    def _cap_hold(self, ledger: DispatchLedger, issue: int, planned: list[int]) -> str | None:
         busy = sorted({*self.in_flight(ledger), *planned})
-        if len(busy) < self.max_open:
+        if issue in busy or len(busy) < self.max_open:
             return None
         where = f" in project {self.project}" if self.project else ""
         refs = ", ".join(f"#{number}" for number in busy)
@@ -340,7 +335,7 @@ class Dispatcher:
             if not self.dry_run and issue.number not in ledger.dependency_holds:
                 await self._note_dependency_hold(ledger, issue.number, reason)
             return f"hold #{issue.number}: {reason}"
-        reason = self._cap_hold(ledger, planned)
+        reason = self._cap_hold(ledger, issue.number, planned)
         if reason is not None:
             return f"hold #{issue.number}: {reason}"
         if self.dry_run:
