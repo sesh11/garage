@@ -10,17 +10,14 @@ from test_max_open import pr, issue, finish_devin, dispatcher_for
 
 from garage.github import GitHubIssues
 from garage.report import BLOCKED, DISPATCHED
-from garage.tracker import CheckRecord, PullRequestRecord
+from garage.tracker import ATTEMPTS_END, ATTEMPTS_START, CheckRecord, PullRequestRecord, replace_attempt_block
 from garage.dispatch import (
-    ATTEMPTS_END,
-    ATTEMPTS_START,
     MAX_BODY_CHARS,
     Dispatcher,
     DispatchLedger,
     DispatchRecord,
     attempt_block,
     build_fix_prompt,
-    replace_attempt_block,
 )
 from garage.projects import load_projects
 from garage.settings import settings_from_env

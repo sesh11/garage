@@ -28,6 +28,20 @@ def legacy_label(name: str) -> str | None:
 
 
 _MARKER = re.compile(r"<!--\s*factory-(?P<key>[a-z-]+):\s*(?P<value>[^\s>]+)\s*-->")
+ATTEMPTS_START = "<!-- garage-attempts:start -->"
+ATTEMPTS_END = "<!-- garage-attempts:end -->"
+_ATTEMPTS = re.compile(re.escape(ATTEMPTS_START) + r".*?" + re.escape(ATTEMPTS_END), re.DOTALL)
+
+
+def extract_attempt_block(body: str) -> str | None:
+    """Return the previous-attempt context, if present."""
+    match = _ATTEMPTS.search(body)
+    return match[0] if match else None
+
+
+def replace_attempt_block(body: str, block: str) -> str:
+    """Keep exactly one attempts block, before the original issue body."""
+    return block + "\n\n" + _ATTEMPTS.sub("", body).lstrip()
 
 
 class IssueRecord(BaseModel):

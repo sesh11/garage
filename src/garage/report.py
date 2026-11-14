@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from collections.abc import Callable, Sequence
 
 from garage_sdk import DROPPED_KEYS, emit, scrub_text
-from garage.tracker import Tracker, IssueRecord
+from garage.tracker import Tracker, IssueRecord, extract_attempt_block, replace_attempt_block
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
 
@@ -252,6 +252,9 @@ class IncidentReporter:
             return None
         count = sum(1 for event in incident.samples if event.ts > since) if since else incident.count
         body = render_incident_body(incident, count, since, self.attribution)
+        attempts = extract_attempt_block(issue.body)
+        if attempts is not None:
+            body = replace_attempt_block(body, attempts)
         became_ready = count >= incident.threshold and not {READY, PROPOSED} & set(issue.labels)
         label = self.ready_label
         if self.dry_run:

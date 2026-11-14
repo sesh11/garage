@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import os
-import re
 import json
 import asyncio
 import logging
@@ -16,7 +15,15 @@ from pydantic import Field, BaseModel
 
 from garage_sdk import emit, scrub_text
 from garage.report import READY, FIXING, LABELS, BLOCKED, DISPATCHED
-from garage.tracker import Tracker, IssueRecord, canonical_label, pull_request_repo
+from garage.tracker import (
+    ATTEMPTS_END,
+    ATTEMPTS_START,
+    Tracker,
+    IssueRecord,
+    canonical_label,
+    pull_request_repo,
+    replace_attempt_block,
+)
 from garage_sdk.events import EventLevel
 from garage.agents.base import CodingAgent, SessionStatus
 from garage.agents.local import LocalCapacityError
@@ -99,11 +106,6 @@ class DispatchLedger(BaseModel):
         return next((record for record in reversed(self.records) if record.issue == issue), None)
 
 
-ATTEMPTS_START = "<!-- garage-attempts:start -->"
-ATTEMPTS_END = "<!-- garage-attempts:end -->"
-_ATTEMPTS = re.compile(re.escape(ATTEMPTS_START) + r".*?" + re.escape(ATTEMPTS_END) + r"\s*", re.DOTALL)
-
-
 def attempt_block(record: DispatchRecord, max_attempts: int) -> str:
     """Render bounded, scrubbed context for the next attempt."""
     prefix = f"{ATTEMPTS_START}\n### Previous attempt\nAttempt {record.attempt} of {max_attempts}\n"
@@ -112,11 +114,6 @@ def attempt_block(record: DispatchRecord, max_attempts: int) -> str:
     prefix += f"Failed: {failure}\nSummary: "
     summary = scrub_text(record.summary or "none")
     return prefix + summary[: 1499 - len(prefix) - len(suffix)] + suffix
-
-
-def replace_attempt_block(body: str, block: str) -> str:
-    """Keep exactly one attempts block, before the original issue body."""
-    return block + "\n\n" + _ATTEMPTS.sub("", body).lstrip()
 
 
 def _replace_prompt_values(text: str, *, repo: str, issue: int, outpost: str, command: str = "") -> str:
