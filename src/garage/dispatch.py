@@ -379,33 +379,38 @@ class Dispatcher:
     async def _attempt_failed(
         self, ledger: DispatchLedger, record: DispatchRecord, failure: str, issue: IssueRecord | None
     ) -> None:
-        record.outcome = "failed"
-        record.failure = failure
-        self._save_ledger(ledger)
-        self._emit(
-            "factory.dispatch_attempt_failed", "factory", issue=record.issue, attempt=record.attempt, failure=failure
-        )
+        outcome = "failed"
         if issue is None or issue.state != "open":
-            return
-        if record.attempt < self.max_attempts:
+            pass
+        elif record.attempt < self.max_attempts:
             await self.tracker.update_issue(
-                record.issue, body=replace_attempt_block(issue.body, attempt_block(record, self.max_attempts))
+                record.issue,
+                body=replace_attempt_block(
+                    issue.body, attempt_block(record.model_copy(update={"failure": failure}), self.max_attempts)
+                ),
             )
             await self.tracker.comment(
                 record.issue, f"Attempt {record.attempt} failed: {failure}. Starting attempt {record.attempt + 1}."
             )
             await self.tracker.remove_label(record.issue, DISPATCHED)
-            self._emit("factory.dispatch_retry", "factory", issue=record.issue, attempt=record.attempt + 1)
         else:
             await self.tracker.add_labels(record.issue, [BLOCKED])
-            await self.tracker.remove_label(record.issue, DISPATCHED)
-            record.outcome = "blocked"
             await self.tracker.comment(
                 record.issue,
                 f"Attempt {record.attempt} failed: {failure}. Remove `{BLOCKED}` to allow a fresh attempt.",
             )
-            self._save_ledger(ledger)
+            await self.tracker.remove_label(record.issue, DISPATCHED)
+            outcome = "blocked"
+        record.outcome = outcome
+        record.failure = failure
+        self._save_ledger(ledger)
+        self._emit(
+            "factory.dispatch_attempt_failed", "factory", issue=record.issue, attempt=record.attempt, failure=failure
+        )
+        if outcome == "blocked":
             self._emit("factory.dispatch_blocked", "factory", issue=record.issue, attempt=record.attempt)
+        elif issue is not None and issue.state == "open":
+            self._emit("factory.dispatch_retry", "factory", issue=record.issue, attempt=record.attempt + 1)
 
     def _cap_hold(self, ledger: DispatchLedger, issue: int, planned: list[int]) -> str | None:
         busy = sorted({*self.in_flight(ledger), *planned})

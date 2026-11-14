@@ -31,6 +31,33 @@ def records(path: Path) -> list[DispatchRecord]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["update_issue", "remove_label"])
+async def test_failed_retry_write_is_retried_next_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    tracker, agent = FakeTracker(), FakeAgent()
+    tracker.issues.append(issue(1))
+    dispatcher = dispatcher_for(tmp_path, tracker, agent)
+    await dispatcher.poll_once()
+    finish_devin(agent, "s1", None)
+    await dispatcher._follow_up(dispatcher._load_ledger())
+    original = getattr(tracker, operation)
+
+    async def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(tracker, operation, broken)
+    await dispatcher.poll_once()
+    assert records(tmp_path)[0].outcome is None
+    assert DISPATCHED in tracker.issues[0].labels
+    monkeypatch.setattr(tracker, operation, original)
+    await dispatcher.poll_once()
+    assert records(tmp_path)[0].outcome == "failed"
+    assert records(tmp_path)[-1].attempt == 2
+    assert tracker.issues[0].body.count(ATTEMPTS_START) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("local", [False, True])
 async def test_retry_blocking_and_manual_fresh_attempt(tmp_path: Path, local: bool) -> None:
     tracker = FakeTracker()
