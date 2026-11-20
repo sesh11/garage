@@ -116,7 +116,8 @@ def _planner(manifest: Manifest) -> tuple[str, str | None]:
     agent = (os.getenv("GARAGE_PLANNER_AGENT") or "").strip() or manifest.planner.agent
     if agent not in PLANNER_AGENTS:
         raise ValueError(f"planner agent must be one of {', '.join(PLANNER_AGENTS)}, not {agent!r}")
-    model = (os.getenv("GARAGE_PLANNER_MODEL") or "").strip() or manifest.planner.model
+    configured = manifest.planner.model if agent == manifest.planner.agent else None
+    model = (os.getenv("GARAGE_PLANNER_MODEL") or "").strip() or configured
     return agent, model or DEFAULT_PLANNER_MODELS.get(agent)
 
 

@@ -263,6 +263,10 @@ def test_project_entry_wins_over_the_manifest(tmp_path: Path, monkeypatch: pytes
     assert (a.planner_agent, a.planner_model) == ("claude-code", "opus")
     assert (b.planner_agent, b.planner_model) == ("codex", None)
     assert (c.planner_agent, c.planner_model) == ("claude-code", "opus")
+    monkeypatch.setenv("GARAGE_PLANNER_AGENT", "codex")
+    a, _, _ = load_projects(projects)
+    assert (a.planner_agent, a.planner_model) == ("codex", None)
+    monkeypatch.delenv("GARAGE_PLANNER_AGENT")
     projects.write_text('[[project]]\nname = "a"\nrepo = "sesh11/a"\n[project.planner]\nagent = "gpt"\n')
     with pytest.raises(ValueError, match="agent must be one of"):
         load_projects(projects)
