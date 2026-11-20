@@ -206,7 +206,9 @@ pbpaste | garage plan --project garage                   # reads stdin when no t
 ```
 
 The planner runs on a configured agent that may read the project's checkout but not change it (Claude Code gets
-only `Read,Glob,Grep`; Codex runs in its `read-only` sandbox; Devin is told not to push or open a PR). It prints
+only `Read,Glob,Grep`, with write tools and MCP servers denied; Codex runs in its `read-only` sandbox; Devin is
+only told not to push or open a PR, so prefer a local planner for untrusted text). The text goes to local CLIs on
+stdin, and a Devin session that asks a question stops the command with its link. It prints
 the plan and changes nothing else: no issues are filed yet. Invalid answers (duplicate ids, unknown dependencies,
 cycles) fail with an error instead of printing a broken graph.
 

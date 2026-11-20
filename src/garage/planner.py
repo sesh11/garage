@@ -279,6 +279,8 @@ def devin_runner(
             status = client.map_status(state.status, state.status_detail or "")
             if state.structured_output is not None and status != SessionStatus.working:
                 return state.structured_output
+            if status == SessionStatus.blocked:
+                raise PlanError(f"Devin planner session {created.url} is waiting for input; answer it there")
             if status in (SessionStatus.failed, SessionStatus.expired, SessionStatus.finished):
                 raise PlanError(f"Devin planner session {created.url} ended ({state.status}) without a plan")
             if loop.time() >= deadline:

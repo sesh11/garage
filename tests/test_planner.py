@@ -219,6 +219,9 @@ async def test_devin_runner_reports_a_session_without_a_plan() -> None:
     run = devin_runner(agent, repo="sesh11/garage", poll_s=0)  # type: ignore[arg-type]
     with pytest.raises(PlanError, match="without a plan"):
         await run("plan", PLAN_SCHEMA)
+    agent.next = SessionState(session_id="s1", status="running", status_detail="waiting_for_user")
+    with pytest.raises(PlanError, match="waiting for input"):
+        await run("plan", PLAN_SCHEMA)
 
 
 def _manifest(tmp_path: Path, extra: str = "") -> Path:
