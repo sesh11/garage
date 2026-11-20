@@ -20,6 +20,7 @@ from garage.agents.devin import DevinClient
 
 
 READ_ONLY_TOOLS = "Read,Glob,Grep"
+WRITE_TOOLS = "Bash,Edit,MultiEdit,Write,NotebookEdit"
 
 PLAN_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -199,6 +200,9 @@ def claude_runner(*, cli_path: str, model: str | None, cwd: Path, timeout_s: flo
             "dontAsk",
             "--allowedTools",
             READ_ONLY_TOOLS,
+            "--disallowedTools",
+            WRITE_TOOLS,
+            "--strict-mcp-config",
         ]
         if model:
             command += ["--model", model]

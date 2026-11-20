@@ -146,6 +146,8 @@ async def test_claude_runner_is_read_only(fake_cli: Path, tmp_path: Path, monkey
     args = recorded["args"]
     assert all("plan it" not in arg for arg in args)
     assert args[args.index("--allowedTools") + 1] == "Read,Glob,Grep"
+    assert set(args[args.index("--disallowedTools") + 1].split(",")) >= {"Bash", "Edit", "Write"}
+    assert "--strict-mcp-config" in args
     assert args[args.index("--model") + 1] == "opus"
     assert json.loads(args[args.index("--json-schema") + 1]) == PLAN_SCHEMA
     assert json.loads(record.read_text())["cwd"] == str(tmp_path)
