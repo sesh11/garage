@@ -112,7 +112,7 @@ def fake_cli(tmp_path: Path) -> Path:
 import os, sys, json
 from pathlib import Path
 args = sys.argv[1:]
-Path(os.environ['FAKE_ARGS']).write_text(json.dumps({'args': args, 'cwd': os.getcwd()}))
+Path(os.environ['FAKE_ARGS']).write_text(json.dumps({'args': args, 'cwd': os.getcwd(), 'stdin': sys.stdin.read()}))
 mode = os.getenv('FAKE_MODE', 'ok')
 if mode == 'hang':
     import time
@@ -138,9 +138,13 @@ async def test_claude_runner_is_read_only(fake_cli: Path, tmp_path: Path, monkey
     record = tmp_path / "args.json"
     monkeypatch.setenv("FAKE_ARGS", str(record))
     run = claude_runner(cli_path=str(fake_cli), model="opus", cwd=tmp_path, timeout_s=10)
-    graph = parse_plan(await run("plan it", PLAN_SCHEMA))
+    long_prompt = "plan it " * 40_000
+    graph = parse_plan(await run(long_prompt, PLAN_SCHEMA))
     assert len(graph.tasks) == 3
-    args = json.loads(record.read_text())["args"]
+    recorded = json.loads(record.read_text())
+    assert recorded["stdin"] == long_prompt
+    args = recorded["args"]
+    assert all("plan it" not in arg for arg in args)
     assert args[args.index("--allowedTools") + 1] == "Read,Glob,Grep"
     assert args[args.index("--model") + 1] == "opus"
     assert json.loads(args[args.index("--json-schema") + 1]) == PLAN_SCHEMA
@@ -157,7 +161,8 @@ async def test_codex_runner_uses_a_read_only_sandbox(
     args = json.loads(record.read_text())["args"]
     assert args[args.index("-s") + 1] == "read-only"
     assert "--model" not in args
-    assert args[-1] == "plan it"
+    assert args[-1] == "-"
+    assert json.loads(record.read_text())["stdin"] == "plan it"
 
 
 @pytest.mark.parametrize(("mode", "error"), [("nonzero", "exited with 3: auth: please log in"), ("error", "401")])
@@ -282,14 +287,13 @@ def test_plan_command_prints_the_graph(
     manifest = _manifest(tmp_path)
     assert cli.main(["plan", "--manifest", str(manifest), "Add a planner"]) == 0
     assert "1. [t1] Add the module" in capsys.readouterr().out
-    args = json.loads(record.read_text())["args"]
-    assert args[args.index("--model") + 1] == "opus"
-    assert "Add a planner" in args[args.index("-p") + 1]
+    recorded = json.loads(record.read_text())
+    assert recorded["args"][recorded["args"].index("--model") + 1] == "opus"
+    assert "Add a planner" in recorded["stdin"]
 
     description = tmp_path / "feature.md"
     description.write_text("# Planner\nAny text")
     assert cli.main(["plan", "--manifest", str(manifest), "--file", str(description), "--json"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert [task["id"] for task in printed["tasks"]] == ["t1", "t2", "t3"]
-    args = json.loads(record.read_text())["args"]
-    assert "# Planner\nAny text" in args[args.index("-p") + 1]
+    assert "# Planner\nAny text" in json.loads(record.read_text())["stdin"]

@@ -158,19 +158,20 @@ PlanRunner = Callable[[str, dict[str, object]], Awaitable[object]]
 """Run a prompt on an agent and return its structured result (any JSON value)."""
 
 
-async def _run_cli(command: list[str], cwd: Path, timeout_s: float) -> str:
+async def _run_cli(command: list[str], prompt: str, cwd: Path, timeout_s: float) -> str:
+    """Run ``command`` with ``prompt`` on stdin, keeping it out of argv's size limit and process listings."""
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=cwd,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
     except OSError as exc:
         raise PlanError(f"could not start planner CLI {command[0]!r}: {exc}") from exc
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout_s)
+        stdout, stderr = await asyncio.wait_for(process.communicate(prompt.encode()), timeout_s)
     except TimeoutError:
         process.kill()
         await process.wait()
@@ -189,7 +190,6 @@ def claude_runner(*, cli_path: str, model: str | None, cwd: Path, timeout_s: flo
         command = [
             cli_path,
             "-p",
-            prompt,
             "--output-format",
             "stream-json",
             "--verbose",
@@ -202,7 +202,7 @@ def claude_runner(*, cli_path: str, model: str | None, cwd: Path, timeout_s: flo
         ]
         if model:
             command += ["--model", model]
-        stdout = await _run_cli(command, cwd, timeout_s)
+        stdout = await _run_cli(command, prompt, cwd, timeout_s)
         for line in reversed(stdout.splitlines()):
             try:
                 event = json.loads(line)
@@ -240,7 +240,7 @@ def codex_runner(*, cli_path: str, model: str | None, cwd: Path, timeout_s: floa
             ]
             if model:
                 command += ["--model", model]
-            await _run_cli([*command, prompt], cwd, timeout_s)
+            await _run_cli([*command, "-"], prompt, cwd, timeout_s)
             try:
                 return result_path.read_text()
             except OSError as exc:
