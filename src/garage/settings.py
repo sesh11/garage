@@ -49,6 +49,8 @@ class GarageSettings:
     intake_interval_s: float = 60
     max_open: int = 10
     max_attempts: int = 5
+    planner_agent: str = "claude-code"
+    planner_model: str | None = "opus"
 
     @property
     def needs_approval(self) -> bool:
@@ -105,6 +107,20 @@ def _bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
+PLANNER_AGENTS = ("devin", "claude-code", "codex")
+DEFAULT_PLANNER_MODELS = {"claude-code": "opus"}
+
+
+def _planner(manifest: Manifest) -> tuple[str, str | None]:
+    """Resolve the planner agent and model: env, then the manifest (with any project entry applied), then defaults."""
+    agent = (os.getenv("GARAGE_PLANNER_AGENT") or "").strip() or manifest.planner.agent
+    if agent not in PLANNER_AGENTS:
+        raise ValueError(f"planner agent must be one of {', '.join(PLANNER_AGENTS)}, not {agent!r}")
+    configured = manifest.planner.model if agent == manifest.planner.agent else None
+    model = (os.getenv("GARAGE_PLANNER_MODEL") or "").strip() or configured
+    return agent, model or DEFAULT_PLANNER_MODELS.get(agent)
+
+
 def _manifest_relative_path(value: str | None, manifest_dir: Path) -> Path | None:
     if value is None:
         return None
@@ -136,6 +152,7 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
     rules_path = _manifest_relative_path(manifest.detect.rules, manifest_dir)
     lookback_s = _duration_env("GARAGE_LOOKBACK", "24h")
     poll_interval_s = _duration_env("GARAGE_POLL_INTERVAL", "30s")
+    planner_agent, planner_model = _planner(manifest)
 
     return GarageSettings(
         manifest=manifest,
@@ -175,4 +192,6 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
         intake_interval_s=_duration_env("GARAGE_INTAKE_INTERVAL", "60s"),
         max_open=_positive_int_env("GARAGE_MAX_OPEN", manifest.dispatch.max_open),
         max_attempts=_positive_int_env("GARAGE_MAX_ATTEMPTS", manifest.dispatch.max_attempts),
+        planner_agent=planner_agent,
+        planner_model=planner_model,
     )

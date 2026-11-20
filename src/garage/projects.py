@@ -21,6 +21,7 @@ from garage_sdk.manifest import (
     DetectSection,
     PolicySection,
     ReportSection,
+    PlannerSection,
     SignalsSection,
     DispatchSection,
     load_manifest,
@@ -28,6 +29,28 @@ from garage_sdk.manifest import (
 
 
 AGENTS = ("devin", "claude-code", "codex")
+
+
+class PlannerEntry(BaseModel):
+    """A ``[project.planner]`` table; set fields win over the manifest's ``[planner]``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent: str | None = None
+    model: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        if value is not None and value not in AGENTS:
+            raise ValueError(f"agent must be one of {', '.join(AGENTS)}")
+        return value
+
+    def apply(self, planner: PlannerSection) -> PlannerSection:
+        """Return ``planner`` with this entry's fields; a new agent without a model drops the old agent's model."""
+        agent = self.agent or planner.agent
+        model = self.model or (planner.model if agent == planner.agent else None)
+        return PlannerSection(agent=agent, model=model)
 
 
 class ProjectEntry(BaseModel):
@@ -45,6 +68,7 @@ class ProjectEntry(BaseModel):
     prompt_rules: list[str] | None = None
     max_open: int | None = Field(default=None, ge=1)
     max_attempts: int | None = Field(default=None, ge=1)
+    planner: PlannerEntry | None = None
 
     @field_validator("name")
     @classmethod
@@ -127,7 +151,9 @@ def _manifest_for(entry: ProjectEntry, base: Path) -> tuple[Manifest, Path]:
     )
     build = manifest.build.model_copy(update={"check": entry.check} if entry.check is not None else {})
     app = AppSection(id=entry.name, repo=entry.repo or manifest.app.repo)
-    return manifest.model_copy(update={"app": app, "dispatch": dispatch, "build": build}), manifest_dir
+    planner = entry.planner.apply(manifest.planner) if entry.planner else manifest.planner
+    update = {"app": app, "dispatch": dispatch, "build": build, "planner": planner}
+    return manifest.model_copy(update=update), manifest_dir
 
 
 def load_projects(path: Path) -> list[GarageSettings]:

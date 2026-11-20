@@ -26,6 +26,9 @@ prompt_rules = [
   "Keep changes to packages/garage-sdk/src additive: ambient-home pins garage-sdk.",
   "If pushing to origin fails with 403, push with `env -u GH_TOKEN git push https://github.com/{repo}.git <branch>`.",
 ]
+[project.planner]                 # `garage plan` turns feature text into a task graph; wins over the manifest's [planner]
+agent = "claude-code"             # claude-code (default), codex or devin
+model = "opus"                    # default for claude-code
 
 [[project]]
 name = "ambient-home"

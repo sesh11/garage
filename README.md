@@ -29,7 +29,8 @@ manifest-driven dispatch with a duplicate ledger (a local record of started sess
 ACU (Agent Compute Unit) limit, a local incidents UI, a loopback request bridge for local clients, and
 [projects](#projects): one `garage serve` can work several repositories, tagging every item and run with its project,
 and an [approval gate](#approval-nothing-starts-until-you-say-yes): new issues wait as `garage:proposed` until you
-approve them on GitHub, on the dashboard, or in the terminal. A manifest is the app's `garage.toml` configuration file.
+approve them on GitHub, on the dashboard, or in the terminal, and a [planner](#planner-feature-text-to-task-graph)
+that turns any feature description into a graph of one-PR tasks. A manifest is the app's `garage.toml` configuration file.
 
 **Not yet:** the triage and plan step (a PM/design pass posted on the issue before dispatch), release/deploy and
 confirmation, a test runner, GitHub sign-in and automatic routing of asks to a project, hosted deployment, or hosted CI (continuous integration). Local checks exist.
@@ -192,6 +193,35 @@ PR state and outcomes are saved in the ledger, so watching continues after a ser
 from older Garage versions only refresh PR state, avoiding mass retries on upgrade; still-running old sessions
 become attempt 1 when they finish. A session that cannot start is not an attempt.
 
+## Planner: feature text to task graph
+
+`garage plan` turns any text describing a feature into a **task graph**: a list of tasks where each task is one
+pull request, and `depends_on` names the tasks that must merge first. The text has no required format: a sentence,
+notes, a spec or a transcript all work.
+
+```bash
+garage plan --project garage "Let me approve plans from my phone"
+garage plan --project garage --file feature.md --json    # JSON, tasks in build order
+pbpaste | garage plan --project garage                   # reads stdin when no text is given
+```
+
+The planner runs on a configured agent that may read the project's checkout but not change it (Claude Code gets
+only `Read,Glob,Grep`, with write tools and MCP servers denied; Codex runs in its `read-only` sandbox; Devin is
+only told not to push or open a PR, so prefer a local planner for untrusted text). The text goes to local CLIs on
+stdin, and a Devin session that asks a question stops the command with its link. It prints
+the plan and changes nothing else: no issues are filed yet. Invalid answers (duplicate ids, unknown dependencies,
+cycles) fail with an error instead of printing a broken graph.
+
+| Setting | Where | Default |
+|---|---|---|
+| Agent: `claude-code`, `codex` or `devin` | `[planner] agent` in the manifest; `[project.planner] agent` on a projects-file entry; `GARAGE_PLANNER_AGENT` | `claude-code` |
+| Model | `[planner] model`; `[project.planner] model`; `GARAGE_PLANNER_MODEL` | `opus` for Claude Code, the CLI's default otherwise |
+
+A projects-file entry wins over its manifest, and the environment variables win over both. An entry that switches
+the agent without naming a model does not inherit the manifest's model. `--agent` and `--model` override everything
+for one run. Local planners reuse `GARAGE_CLAUDE_PATH`, `GARAGE_CODEX_PATH` and `GARAGE_LOCAL_TIMEOUT`; the Devin
+planner needs `DEVIN_API_KEY` and `DEVIN_ORG_ID`.
+
 ## Quick start
 
 ### Install from Git
@@ -267,7 +297,8 @@ the repository and data paths. Reporting and dispatch are opt-in with `GARAGE_RE
 `GARAGE_GITHUB_TOKEN` enables issue mutations, while `DEVIN_API_KEY` and `DEVIN_ORG_ID` enable dispatch. Additional
 settings include `GARAGE_MAX_NEW_ISSUES_PER_DAY`, `GARAGE_DISPATCH_INTERVAL`, `GARAGE_LOOKBACK`,
 `GARAGE_POLL_INTERVAL`, `GARAGE_INTAKE` (watch new issues, default off), `GARAGE_INTAKE_INTERVAL` (default `60s`),
-`GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_MAX_OPEN` (issues in flight per project; overrides
+`GARAGE_HOST`, `GARAGE_PORT`, `GARAGE_DEVIN_MAX_ACU`, `GARAGE_PLANNER_AGENT` and `GARAGE_PLANNER_MODEL` (see
+[Planner](#planner-feature-text-to-task-graph)), `GARAGE_MAX_OPEN` (issues in flight per project; overrides
 `[dispatch].max_open`, default 10), `GARAGE_MAX_ATTEMPTS` (overrides `[dispatch].max_attempts` for all projects,
 default 5), `GARAGE_BRIDGE_TOKEN`, and
 `GARAGE_LOG_LEVEL` (default `INFO`).
