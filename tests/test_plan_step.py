@@ -241,3 +241,20 @@ def test_plan_requests_setting(monkeypatch) -> None:
     assert settings_from_env(example_manifest()).plan_requests is True
     monkeypatch.setenv("GARAGE_PLAN_REQUESTS", "0")
     assert settings_from_env(example_manifest()).plan_requests is False
+
+
+@pytest.mark.asyncio
+async def test_a_request_declined_while_planning_publishes_nothing(env) -> None:
+    tracker, store, fake, step, _ = env
+    item_id = ask(store, tracker, ClientKind.owner)
+    approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=True)])
+
+    async def decline_meanwhile(prompt: str, schema: dict[str, object]) -> object:
+        await approvals.decline(approvals.find(item_id), "nithin")
+        return TWO_TASKS
+
+    step._planner = Planner(decline_meanwhile, repo=REPO)
+    assert await step.poll_once() == ["dropped the plan for #1: it was declined or closed while planning"]
+    assert len(tracker.issues) == 1 and tracker.issues[0].state == "closed"
+    assert PLANNING not in tracker.issues[0].labels and not planned(tracker.issues[0].body)
+    assert store.get(item_id).state == ItemState.declined

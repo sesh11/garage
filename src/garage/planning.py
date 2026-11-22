@@ -188,6 +188,15 @@ class PlanStep:
             graph = await self._planner.plan(plan_text(issue))
         except Exception as exc:
             return await self._failed(item, number, exc)
+        current = self.store.get(item.id)
+        latest = await self.tracker.get_issue(number)
+        if current is None or current.state != ItemState.planning or latest is None or latest.state != "open":
+            if latest is not None and PLANNING in latest.labels:
+                await self.tracker.remove_label(number, PLANNING)
+            state = current.state.value if current is not None else "removed"
+            logger.info("Dropped the plan for #%d: it changed while planning (%s)", number, state)
+            return f"dropped the plan for #{number}: it was declined or closed while planning"
+        issue = latest
         why = "Approved" if approved else ("Trusted request" if is_trusted else "Request")
         rendered = scrub_text(render_plan(graph)).strip()
         ordered = graph.order()
