@@ -30,6 +30,7 @@ from garage.report import (
     RequestLogger,
     IncidentReporter,
 )
+from garage.planner import render_plan, build_planner
 from garage.tracker import Tracker, CheckRecord, IssueRecord, PullRequestRecord, canonical_label
 from garage_sdk.api import ItemKind, IssueLink, ItemState, ClientKind, SubmitWork, json_schemas
 from garage.approval import (
@@ -592,6 +593,23 @@ async def _decide(projects: Sequence[GarageSettings], ref: str, project: str | N
     return 0
 
 
+async def _plan(settings: GarageSettings, args: argparse.Namespace) -> int:
+    if args.file is not None:
+        text = args.file.read_text(encoding="utf-8")
+    elif args.text in (None, "-"):
+        text = sys.stdin.read()
+    else:
+        text = args.text
+    planner = build_planner(settings, agent=args.agent, model=args.model, repo_path=args.repo_path)
+    graph = await planner.plan(text)
+    if args.json:
+        ordered = graph.model_copy(update={"tasks": graph.order()})
+        print(json.dumps(ordered.model_dump(mode="json"), indent=2))
+    else:
+        print(render_plan(graph), end="")
+    return 0
+
+
 async def _intake(settings: GarageSettings, dry_run: bool, since: str | None) -> list[str]:
     store = Store(settings.data_dir / "garage.db")
     watcher = build_watcher(
@@ -719,6 +737,16 @@ def main(argv: list[str] | None = None) -> int:
     ask_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
     ask_parser.add_argument("--project", help="the project to ask (optional with one project)")
     ask_parser.add_argument("text")
+    plan_parser = subparsers.add_parser("plan", help="turn a feature description into a task graph (one PR per task)")
+    plan_parser.add_argument("--manifest", type=Path)
+    plan_parser.add_argument("--projects", type=Path, help=PROJECTS_HELP)
+    plan_parser.add_argument("--project", help="the project to plan for (optional with one project)")
+    plan_parser.add_argument("--agent", choices=("claude-code", "codex", "devin"), help="override [planner].agent")
+    plan_parser.add_argument("--model", help="override [planner].model")
+    plan_parser.add_argument("--repo-path", type=Path, help="checkout the agent reads (default: the project's path)")
+    plan_parser.add_argument("--file", type=Path, help="read the description from this file")
+    plan_parser.add_argument("--json", action="store_true", help="print the graph as JSON, tasks in build order")
+    plan_parser.add_argument("text", nargs="?", help="the feature description, any format; '-' or omitted reads stdin")
     for name, verb in (("approve", "approve"), ("decline", "decline")):
         decide = subparsers.add_parser(name, help=f"{verb} a proposed item (GitHub issue and inbox)")
         decide.add_argument("--manifest", type=Path)
@@ -837,6 +865,12 @@ def main(argv: list[str] | None = None) -> int:
                 print("several projects: name one with --project", file=sys.stderr)
                 return 2
             return asyncio.run(_ask(chosen[0], args.text))
+        if args.command == "plan":
+            chosen = only(projects, args.project)
+            if len(chosen) != 1:
+                print("several projects: name one with --project", file=sys.stderr)
+                return 2
+            return asyncio.run(_plan(chosen[0], args))
         if args.command == "log":
             return _log(projects, args.id, args.project, args.json)
         if args.command == "labels":

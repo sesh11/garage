@@ -77,6 +77,13 @@ class DispatchSection(BaseModel):
         return value
 
 
+class PlannerSection(BaseModel):
+    """Which agent turns a feature description into a task graph; ``model`` unset means the agent's default."""
+
+    agent: str = "claude-code"
+    model: str | None = None
+
+
 class PolicySection(BaseModel):
     """Human approvals and automation policy; auto_accept is not acted on in v0."""
 
@@ -106,6 +113,7 @@ class Manifest(BaseModel):
     report: ReportSection
     dispatch: DispatchSection
     policy: PolicySection
+    planner: PlannerSection = Field(default_factory=PlannerSection)
 
 
 def load_manifest(path: Path) -> Manifest:
