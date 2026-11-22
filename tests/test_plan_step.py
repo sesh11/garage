@@ -289,3 +289,24 @@ async def test_task_issues_inherit_the_requests_own_dependencies(env) -> None:
     await step.poll_once()
     _, first, second = tracker.issues
     assert "Depends on #9" in first.body and "Depends on #2, #9" in second.body
+
+
+@pytest.mark.asyncio
+async def test_a_plan_whose_comment_fails_is_taken_out_and_replanned_after_approval(env) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS, TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    comment = tracker.comment
+
+    async def plan_comment_fails(number: int, body: str) -> None:
+        if "planned it before any work starts" in body:
+            raise RuntimeError("GitHub is down")
+        await comment(number, body)
+
+    tracker.comment = plan_comment_fails
+    assert await step.poll_once() == ["could not plan #1: GitHub is down"]
+    assert not planned(tracker.issues[0].body) and [issue.state for issue in tracker.issues[1:]] == ["closed"] * 2
+    tracker.comment = comment
+    approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=True)])
+    await approvals.approve(approvals.find(item_id), "nithin")
+    assert await step.poll_once() == ["planned #1 (2 tasks): filed #4, #5"]

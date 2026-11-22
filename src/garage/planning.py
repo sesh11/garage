@@ -210,6 +210,7 @@ class PlanStep:
                     await self.tracker.update_issue(task_issue, state="closed", state_reason="not_planned")
                 except Exception as close_error:
                     logger.warning("Could not close task issue #%d: %s", task_issue, close_error)
+            await self._unplan(number)
             return await self._failed(item, number, exc)
         self._planned.discard(item.id)
         emit("factory.planned", "factory", item=item.id, issue=number, tasks=len(graph.tasks))
@@ -261,6 +262,15 @@ class PlanStep:
                 f"#{value}" for value in numbers.values()
             )
         return result
+
+    async def _unplan(self, number: int) -> None:
+        """Take a half-published plan back out of the issue body, so approving again plans it afresh."""
+        try:
+            issue = await self.tracker.get_issue(number)
+            if issue is not None and planned(issue.body):
+                await self.tracker.update_issue(number, body=_PLAN_BLOCK.sub("", issue.body).rstrip() + "\n")
+        except Exception as exc:
+            logger.warning("Could not remove the plan from #%d: %s", number, exc)
 
     async def _failed(self, item: InboxItem, number: int, error: Exception) -> str:
         detail = scrub_text(str(error) or type(error).__name__)[:500]
