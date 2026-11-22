@@ -198,6 +198,27 @@ class PlanStep:
             return f"dropped the plan for #{number}: it was declined or closed while planning"
         issue = latest
         why = "Approved" if approved else ("Trusted request" if is_trusted else "Request")
+        created: list[int] = []
+        try:
+            result = await self._publish(item, issue, graph, why, created)
+        except Exception as exc:
+            for task_issue in created:
+                try:
+                    await self.tracker.update_issue(task_issue, state="closed", state_reason="not_planned")
+                except Exception as close_error:
+                    logger.warning("Could not close task issue #%d: %s", task_issue, close_error)
+            return await self._failed(item, number, exc)
+        self._planned.discard(item.id)
+        emit("factory.planned", "factory", item=item.id, issue=number, tasks=len(graph.tasks))
+        if self.on_ready is not None:
+            self.on_ready()
+        return result
+
+    async def _publish(
+        self, item: InboxItem, issue: IssueRecord, graph: TaskGraph, why: str, created: list[int]
+    ) -> str:
+        """Post the plan and make its work ready; task issues filed are appended to ``created`` as they are filed."""
+        number = issue.number
         rendered = scrub_text(render_plan(graph)).strip()
         ordered = graph.order()
         if len(ordered) == 1:
@@ -219,6 +240,7 @@ class PlanStep:
                     scrub_text(task.title)[:120], task_body(graph, task.id, issue, numbers), [READY]
                 )
                 numbers[task.id] = filed.number
+                created.append(filed.number)
             listing = "\n".join(f"- `{task.id}` #{numbers[task.id]}: {scrub_text(task.title)}" for task in ordered)
             await self.tracker.update_issue(
                 number, body=with_plan(issue.body, f"### Plan\n\n{rendered}\n\nTask issues:\n{listing}")
@@ -235,10 +257,6 @@ class PlanStep:
             result = f"planned #{number} ({len(ordered)} tasks): filed " + ", ".join(
                 f"#{value}" for value in numbers.values()
             )
-        self._planned.discard(item.id)
-        emit("factory.planned", "factory", item=item.id, issue=number, tasks=len(ordered))
-        if self.on_ready is not None:
-            self.on_ready()
         return result
 
     async def _failed(self, item: InboxItem, number: int, error: Exception) -> str:

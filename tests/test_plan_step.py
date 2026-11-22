@@ -258,3 +258,23 @@ async def test_a_request_declined_while_planning_publishes_nothing(env) -> None:
     assert len(tracker.issues) == 1 and tracker.issues[0].state == "closed"
     assert PLANNING not in tracker.issues[0].labels and not planned(tracker.issues[0].body)
     assert store.get(item_id).state == ItemState.declined
+
+
+@pytest.mark.asyncio
+async def test_a_partly_published_plan_closes_its_task_issues_and_waits(env) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    create = tracker.create_issue
+
+    async def second_fails(title: str, body: str, labels: list[str]) -> IssueRecord:
+        if len(tracker.issues) == 2:
+            raise RuntimeError("GitHub is down")
+        filed: IssueRecord = await create(title, body, labels)
+        return filed
+
+    tracker.create_issue = second_fails
+    assert await step.poll_once() == ["could not plan #1: GitHub is down"]
+    assert len(tracker.issues) == 2 and tracker.issues[1].state == "closed"
+    assert tracker.issues[1].state_reason == "not_planned"
+    assert store.get(item_id).state == ItemState.awaiting_approval and PROPOSED in tracker.issues[0].labels
