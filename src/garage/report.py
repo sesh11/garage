@@ -13,7 +13,14 @@ from datetime import datetime, timezone, timedelta
 from collections.abc import Callable, Sequence
 
 from garage_sdk import DROPPED_KEYS, emit, scrub_text
-from garage.tracker import Tracker, IssueRecord, extract_attempt_block, replace_attempt_block
+from garage.tracker import (
+    Tracker,
+    IssueRecord,
+    extract_plan_block,
+    replace_plan_block,
+    extract_attempt_block,
+    replace_attempt_block,
+)
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
 
@@ -257,6 +264,9 @@ class IncidentReporter:
         attempts = extract_attempt_block(issue.body)
         if attempts is not None:
             body = replace_attempt_block(body, attempts)
+        plan = extract_plan_block(issue.body)
+        if plan is not None:
+            body = replace_plan_block(body, plan)
         became_ready = count >= incident.threshold and not {READY, PROPOSED} & set(issue.labels)
         label = self.ready_label
         if self.dry_run:

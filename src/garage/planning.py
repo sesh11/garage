@@ -24,15 +24,13 @@ from garage_sdk import emit, scrub_text
 from garage.store import Store
 from garage.report import READY, FIXING, REQUEST, INCIDENT, PLANNING, PROPOSED, DISPATCHED
 from garage.planner import Planner, TaskGraph, render_plan
-from garage.tracker import Tracker, IssueRecord
+from garage.tracker import PLAN_END, PLAN_START, Tracker, IssueRecord, replace_plan_block
 from garage_sdk.api import InboxItem, ItemState, ClientKind
 from garage_sdk.manifest import PolicySection
 
 
 logger = logging.getLogger(__name__)
 
-PLAN_START = "<!-- garage-plan-start -->"
-PLAN_END = "<!-- garage-plan-end -->"
 PLANNER_CLIENT = "garage-planner"
 _PLAN_BLOCK = re.compile(re.escape(PLAN_START) + r".*?" + re.escape(PLAN_END), re.DOTALL)
 _HIDDEN = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -45,8 +43,7 @@ def planned(body: str) -> bool:
 
 def with_plan(body: str, plan: str) -> str:
     """Return ``body`` with its plan block replaced by ``plan``."""
-    base = _PLAN_BLOCK.sub("", body).rstrip()
-    return f"{base}\n\n{PLAN_START}\n{plan.strip()}\n{PLAN_END}\n"
+    return replace_plan_block(body, f"{PLAN_START}\n{plan.strip()}\n{PLAN_END}")
 
 
 def plan_text(issue: IssueRecord) -> str:

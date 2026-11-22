@@ -44,6 +44,22 @@ def replace_attempt_block(body: str, block: str) -> str:
     return block + "\n\n" + _ATTEMPTS.sub("", body).lstrip()
 
 
+PLAN_START = "<!-- garage-plan-start -->"
+PLAN_END = "<!-- garage-plan-end -->"
+_PLAN = re.compile(re.escape(PLAN_START) + r".*?" + re.escape(PLAN_END), re.DOTALL)
+
+
+def extract_plan_block(body: str) -> str | None:
+    """Return the Garage plan block, markers included, if present."""
+    match = _PLAN.search(body)
+    return match[0] if match else None
+
+
+def replace_plan_block(body: str, block: str) -> str:
+    """Keep exactly one plan block, after the rest of the issue body."""
+    return f"{_PLAN.sub('', body).rstrip()}\n\n{block.strip()}\n"
+
+
 class IssueRecord(BaseModel):
     """The parts of an issue Garage tracks."""
 
