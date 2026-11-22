@@ -26,6 +26,7 @@ from garage.report import READY, FIXING, REQUEST, INCIDENT, PLANNING, PROPOSED, 
 from garage.planner import Planner, TaskGraph, render_plan
 from garage.tracker import PLAN_END, PLAN_START, Tracker, IssueRecord, replace_plan_block
 from garage_sdk.api import InboxItem, ItemState, ClientKind
+from garage.dependencies import parse_dependencies
 from garage_sdk.manifest import PolicySection
 
 
@@ -63,7 +64,7 @@ def trusted(item: InboxItem, issue: IssueRecord, policy: PolicySection, repo: st
 
 
 def task_body(graph: TaskGraph, task_id: str, parent: IssueRecord, numbers: dict[str, int]) -> str:
-    """Render the issue body for one task of a plan."""
+    """Render the issue body for one task of a plan; every task also waits on the parent's own dependencies."""
     task = next(task for task in graph.tasks if task.id == task_id)
     lines = [
         f"<!-- garage-plan-task: {parent.number}:{task.id} -->",
@@ -71,8 +72,13 @@ def task_body(graph: TaskGraph, task_id: str, parent: IssueRecord, numbers: dict
         "",
         scrub_text(task.body).strip(),
     ]
-    if task.depends_on:
-        lines += ["", "Depends on " + ", ".join(f"#{numbers[dependency]}" for dependency in task.depends_on)]
+    inherited = [
+        f"{dependency.repo}#{dependency.number}" if dependency.repo else f"#{dependency.number}"
+        for dependency in parse_dependencies(_PLAN_BLOCK.sub("", parent.body))
+    ]
+    refs = [f"#{numbers[dependency]}" for dependency in task.depends_on] + inherited
+    if refs:
+        lines += ["", "Depends on " + ", ".join(dict.fromkeys(refs))]
     return with_plan("\n".join(lines), f"Planned as task `{task.id}` of #{parent.number}.")
 
 

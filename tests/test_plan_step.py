@@ -278,3 +278,14 @@ async def test_a_partly_published_plan_closes_its_task_issues_and_waits(env) -> 
     assert len(tracker.issues) == 2 and tracker.issues[1].state == "closed"
     assert tracker.issues[1].state_reason == "not_planned"
     assert store.get(item_id).state == ItemState.awaiting_approval and PROPOSED in tracker.issues[0].labels
+
+
+@pytest.mark.asyncio
+async def test_task_issues_inherit_the_requests_own_dependencies(env) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    ask(store, tracker, ClientKind.owner)
+    tracker.issues[0].body += "\n\nDepends on #9"
+    await step.poll_once()
+    _, first, second = tracker.issues
+    assert "Depends on #9" in first.body and "Depends on #2, #9" in second.body
