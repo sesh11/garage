@@ -9,11 +9,11 @@ from conftest import FakeAgent, FakeTracker, example_manifest
 from garage.store import Store
 from garage.report import READY, REQUEST, PLANNING, PROPOSED
 from garage.planner import Planner
-from garage.tracker import IssueRecord
+from garage.tracker import PLAN_START, IssueRecord
 from garage_sdk.api import InboxItem, IssueLink, ItemState, ClientKind, SubmitWork
 from garage.approval import Approvals, IssueWatcher, ApprovalTarget, dispatch_hold
 from garage.dispatch import Dispatcher
-from garage.planning import PLAN_START, PlanStep, planned, trusted, plan_text
+from garage.planning import PlanStep, planned, trusted, plan_text
 from garage.settings import settings_from_env
 from garage_sdk.manifest import PolicySection
 
