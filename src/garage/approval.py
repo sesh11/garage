@@ -8,7 +8,8 @@ same place:
 * The dashboard's "Waiting for you" list and the ``garage approve`` / ``garage decline`` commands call
   :class:`Approvals`, which changes the GitHub issue first and then the inbox, so the next poll sees nothing new.
 
-Only an approved issue (one labeled ``garage:ready-for-fix``) is ever dispatched to a coding agent.
+Only an approved issue (one labeled ``garage:ready-for-fix``) is ever dispatched to a coding agent. With the plan
+step on (:mod:`garage.planning`), approved work is planned first, and trusted requests are planned without approval.
 """
 
 from __future__ import annotations
@@ -25,9 +26,10 @@ from pydantic import BaseModel
 
 from garage_sdk import emit
 from garage.store import Store
-from garage.report import READY, FIXING, LABELS, REQUEST, INCIDENT, OBSERVED, PROPOSED, DISPATCHED
+from garage.report import READY, FIXING, LABELS, REQUEST, INCIDENT, OBSERVED, PLANNING, PROPOSED, DISPATCHED
 from garage.tracker import Tracker, IssueFeed, IssueRecord
 from garage_sdk.api import Source, ItemKind, InboxItem, IssueLink, ItemState, ClientKind, SubmitWork
+from garage.planning import planned
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,8 @@ def initial_state(labels: Sequence[str], needs_approval: bool) -> ItemState:
         return ItemState.running
     if READY in labels:
         return ItemState.approved
+    if PLANNING in labels:
+        return ItemState.planning
     if PROPOSED in labels:
         return ItemState.awaiting_approval
     if OBSERVED in labels:
@@ -57,17 +61,16 @@ def initial_state(labels: Sequence[str], needs_approval: bool) -> ItemState:
     return ItemState.awaiting_approval if needs_approval else ItemState.approved
 
 
-def next_step(item: InboxItem) -> str:
-    """Return what happens to an approved item next.
+def next_step(item: InboxItem, plans: bool = False) -> str:
+    """Return what happens to an approved item next: ``"plan"`` when the plan step is on, else ``"dispatch"``."""
+    return "plan" if plans else "dispatch"
 
-    Today that is always ``"dispatch"``: the dispatcher starts a coding agent on the approved issue. This is where a
-    future ``"plan"`` step (triage and a design posted on the issue, approved on its own) slots in before dispatch.
+
+def dispatch_hold(store: Store, repo: str, plans: bool = False) -> Callable[[IssueRecord], str | None]:
+    """Return the dispatcher's last check: a reason to hold a ready issue back, or None to dispatch it.
+
+    With ``plans``, an issue Garage tracks waits until its plan is written into its body.
     """
-    return "dispatch"
-
-
-def dispatch_hold(store: Store, repo: str) -> Callable[[IssueRecord], str | None]:
-    """Return the dispatcher's last check: a reason to hold a ready issue back, or None to dispatch it."""
 
     def hold(issue: IssueRecord) -> str | None:
         item = store.by_issue(repo, issue.number)
@@ -75,8 +78,9 @@ def dispatch_hold(store: Store, repo: str) -> Callable[[IssueRecord], str | None
             return None
         if item.state in {ItemState.declined, ItemState.cancelled}:
             return f"{item.id} was {item.state.value} in Garage"
-        step = next_step(item)
-        return None if step == "dispatch" else f"waiting for the {step} step"
+        if plans and not planned(issue.body):
+            return "waiting for the plan step"
+        return None
 
     return hold
 
@@ -89,6 +93,7 @@ class ApprovalTarget:
     repo: str
     tracker: Tracker | None
     on_approved: Callable[[], None] | None = None
+    plans: bool = False
 
 
 class Approvals:
@@ -159,11 +164,12 @@ class Approvals:
             assert tracker is not None
             await tracker.add_labels(item.issue.number, [READY])
             await tracker.remove_label(item.issue.number, PROPOSED)
-            await tracker.comment(item.issue.number, f"Approved by {by} from the Garage {via}. {_after(item)}")
+            plans = target.plans if target is not None else False
+            await tracker.comment(item.issue.number, f"Approved by {by} from the Garage {via}. {_after(item, plans)}")
             item.state = ItemState.approved
             self.store.save(item, by, "approve", {"via": via})
         emit("factory.approved", "factory", item=item.id, issue=item.issue.number, via=via)
-        if next_step(item) == "dispatch" and target is not None and target.on_approved is not None:
+        if target is not None and target.on_approved is not None:
             target.on_approved()
         return item
 
@@ -209,9 +215,10 @@ def describe(entry: dict[str, object]) -> str:
     return action.replace("_", " ") + (f" by {client}" if client != GITHUB_CLIENT else "")
 
 
-def _after(item: InboxItem) -> str:
-    step = next_step(item)
-    return "A coding agent starts on the next dispatch poll." if step == "dispatch" else f"Next: {step}."
+def _after(item: InboxItem, plans: bool = False) -> str:
+    if next_step(item, plans) == "plan":
+        return "Garage plans it next; a coding agent starts once the plan is posted."
+    return "A coding agent starts on the next dispatch poll."
 
 
 class IntakeCursor(BaseModel):
@@ -244,11 +251,14 @@ class IssueWatcher:
         rescan_s: float | None = None,
         on_approved: Callable[[], None] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        plans: bool = False,
+        trusts: Callable[[InboxItem, IssueRecord], bool] | None = None,
     ) -> None:
         """Configure the watched repository.
 
         ``backfill_s`` also adopts issues opened that long before the first start; ``rescan_s`` re-reads that far
-        back on this run (for ``garage intake --since``).
+        back on this run (for ``garage intake --since``). With ``plans``, approved work goes to the plan step, and
+        a new issue ``trusts`` accepts is labeled ``garage:planning`` instead of ``garage:proposed``.
         """
         self.store = store
         self.tracker = tracker
@@ -261,6 +271,8 @@ class IssueWatcher:
         self.rescan_s = rescan_s
         self.on_approved = on_approved
         self.clock = clock
+        self.plans = plans
+        self.trusts = trusts
         self.actions: list[str] = []
         self._labels_ready = False
 
@@ -384,9 +396,18 @@ class IssueWatcher:
         )
         item, _ = self.store.submit(client, trust, work, self.tracker.repo, self.project)
         item.issue = IssueLink(number=issue.number, url=issue.url)
+        if (
+            state == ItemState.awaiting_approval
+            and self.plans
+            and self.trusts is not None
+            and self.trusts(item, issue)
+        ):
+            state = ItemState.planning
         item.state = state
         self.store.save(item, GITHUB_CLIENT, "intake", {"labels": issue.labels})
-        if state == ItemState.awaiting_approval and PROPOSED not in issue.labels:
+        if state == ItemState.planning and PLANNING not in issue.labels:
+            await self.tracker.add_labels(issue.number, [PLANNING])
+        elif state == ItemState.awaiting_approval and PROPOSED not in issue.labels:
             await self._propose(item, issue)
         elif state == ItemState.approved and READY not in issue.labels:
             await self.tracker.add_labels(issue.number, [READY])
@@ -453,14 +474,14 @@ class IssueWatcher:
             if PROPOSED in issue.labels:
                 await self.tracker.remove_label(issue.number, PROPOSED)
                 who = f" by @{by}" if by else ""
-                await self.tracker.comment(issue.number, f"Approved on GitHub{who}. {_after(item)}")
+                await self.tracker.comment(issue.number, f"Approved on GitHub{who}. {_after(item, self.plans)}")
             emit("factory.approved", "factory", item=item.id, issue=issue.number, via="github")
-            if next_step(item) == "dispatch" and self.on_approved is not None:
+            if self.on_approved is not None:
                 self.on_approved()
             return f"{tag} approved on GitHub: {before.value} -> approved"
         if READY in issue.labels and item.state == ItemState.approved and DISPATCHED not in issue.labels:
             # Approved elsewhere (another process, such as `garage approve`): make sure the dispatcher hears of it.
-            if not self.dry_run and next_step(item) == "dispatch" and self.on_approved is not None:
+            if not self.dry_run and self.on_approved is not None:
                 self.on_approved()
             return None
         if (FIXING in issue.labels or DISPATCHED in issue.labels) and item.state == ItemState.approved:

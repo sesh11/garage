@@ -51,6 +51,7 @@ class GarageSettings:
     max_attempts: int = 5
     planner_agent: str = "claude-code"
     planner_model: str | None = "opus"
+    plan_requests: bool = False
 
     @property
     def needs_approval(self) -> bool:
@@ -194,4 +195,5 @@ def settings_for_manifest(manifest: Manifest, manifest_dir: Path, *, project_ove
         max_attempts=_positive_int_env("GARAGE_MAX_ATTEMPTS", manifest.dispatch.max_attempts),
         planner_agent=planner_agent,
         planner_model=planner_model,
+        plan_requests=_bool_env("GARAGE_PLAN_REQUESTS", manifest.planner.requests),
     )

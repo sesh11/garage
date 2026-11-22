@@ -37,7 +37,13 @@ START = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
 
 
 def issue(
-    number: int, labels: list[str] | None = None, *, state: str = "open", age: timedelta = timedelta(0), **extra
+    number: int,
+    labels: list[str] | None = None,
+    *,
+    state: str = "open",
+    age: timedelta = timedelta(0),
+    author: str = "sesh11",
+    **extra,
 ):
     created = START + timedelta(minutes=5) - age
     return IssueRecord(
@@ -49,7 +55,7 @@ def issue(
         labels=list(labels or []),
         created_at=created,
         updated_at=created,
-        author="sesh11",
+        author=author,
         **extra,
     )
 
@@ -337,7 +343,7 @@ def test_cli_ask_approve_and_decline(tmp_path, monkeypatch, capsys) -> None:
     assert tracker.issues[1].state == "closed"
     assert cli.main(["approve", "--manifest", manifest, "#2"]) == 1
     assert "not waiting for approval" in capsys.readouterr().err
-    tracker.issues.append(issue(3))
+    tracker.issues.append(issue(3, author="stranger"))
     tracker.issues[-1].created_at = tracker.issues[-1].updated_at = datetime.now(timezone.utc)
     assert cli.main(["intake", "--manifest", manifest, "--dry-run", "--since", "1h"]) == 0
     assert "[dry run] take in #3" in capsys.readouterr().out

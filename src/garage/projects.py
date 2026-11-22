@@ -50,7 +50,7 @@ class PlannerEntry(BaseModel):
         """Return ``planner`` with this entry's fields; a new agent without a model drops the old agent's model."""
         agent = self.agent or planner.agent
         model = self.model or (planner.model if agent == planner.agent else None)
-        return PlannerSection(agent=agent, model=model)
+        return planner.model_copy(update={"agent": agent, "model": model})
 
 
 class ProjectEntry(BaseModel):

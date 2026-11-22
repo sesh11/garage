@@ -29,6 +29,7 @@ REQUEST = "garage:request"
 OBSERVED = "garage:observed"
 READY = "garage:ready-for-fix"
 PROPOSED = "garage:proposed"
+PLANNING = "garage:planning"
 FIXING = "garage:fixing"
 DISPATCHED = "garage:dispatched"
 BLOCKED = "garage:blocked"
@@ -38,6 +39,7 @@ LABELS: dict[str, tuple[str, str]] = {
     REQUEST: ("1d76db", "Fix or feature request submitted through the bridge"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),
     PROPOSED: ("bfd4f2", "Waiting for the owner's approval; add garage:ready-for-fix to approve, close to decline"),
+    PLANNING: ("fef2c0", "Garage is planning it: tasks first, then a coding agent"),
     READY: ("d93f0b", "Approved: ready for a coding-agent fix session"),
     FIXING: ("0e8a16", "A Devin session is working on it"),
     DISPATCHED: ("c5def5", "A Devin fix session was started; remove to allow another"),
