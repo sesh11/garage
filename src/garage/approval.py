@@ -74,11 +74,10 @@ def dispatch_hold(store: Store, repo: str, plans: bool = False) -> Callable[[Iss
     """
 
     def hold(issue: IssueRecord) -> str | None:
-        task = issue.marker("plan-task")
-        parent_number = task.split(":", 1)[0] if task else ""
-        parent = store.by_issue(repo, int(parent_number)) if parent_number.isdigit() else None
+        task = re.fullmatch(r"(\d{1,9}):.*", issue.marker("plan-task") or "")
+        parent = store.by_issue(repo, int(task[1])) if task else None
         if parent is not None and parent.state in {ItemState.declined, ItemState.cancelled}:
-            return f"its request #{parent_number} was {parent.state.value}"
+            return f"its request #{task[1] if task else ''} was {parent.state.value}"
         item = store.by_issue(repo, issue.number)
         if item is None:
             return None
@@ -162,7 +161,7 @@ class Approvals:
         """Approve: label the issue ``garage:ready-for-fix``, mark the item approved, and wake the dispatcher."""
         async with self._lock:
             item = self.store.get(item.id) or item
-            if item.state == ItemState.planning:
+            if item.state == ItemState.planning and (target := self.target(item)) is not None and target.plans:
                 raise ApprovalError(f"{item.id} is being planned; a coding agent starts once its plan is posted")
             if item.state not in BEFORE_APPROVAL:
                 raise ApprovalError(f"{item.id} is {item.state.value}, not waiting for approval")
@@ -475,7 +474,9 @@ class IssueWatcher:
             if item.state == ItemState.awaiting_approval and PROPOSED not in issue.labels:
                 await self._propose(item, issue)
             return f"{tag} reopened on GitHub: {before.value} -> {item.state.value}"
-        if READY in issue.labels and item.state in BEFORE_APPROVAL - {ItemState.planning}:
+        if READY in issue.labels and item.state in (
+            BEFORE_APPROVAL - {ItemState.planning} if self.plans else BEFORE_APPROVAL
+        ):
             item.state = ItemState.approved
             if self.dry_run:
                 return f"{tag} approved on GitHub: {before.value} -> approved"

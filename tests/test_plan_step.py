@@ -383,7 +383,9 @@ async def test_no_task_is_ready_before_the_last_check_and_an_approval_meanwhile_
 @pytest.mark.asyncio
 async def test_watcher_leaves_planning_items_and_unfinished_task_issues_to_the_plan_step(env, tmp_path) -> None:
     tracker, store, _, _, _ = env
-    watcher = IssueWatcher(store, tracker, tmp_path / "intake.json", project="ambient-home", clock=lambda: START)
+    watcher = IssueWatcher(
+        store, tracker, tmp_path / "intake.json", project="ambient-home", clock=lambda: START, plans=True
+    )
     item_id = ask(store, tracker, ClientKind.owner)
     item = store.get(item_id)
     item.state = ItemState.planning
@@ -446,3 +448,30 @@ async def test_approving_during_planning_is_refused_and_a_split_request_is_never
     agent = FakeAgent()
     await dispatcher(tracker, store, tmp_path, agent).poll_once()
     assert len(agent.created) == 1 and "Theme tokens" in str(agent.created[0][1]["title"])
+
+
+@pytest.mark.asyncio
+async def test_an_odd_plan_task_marker_does_not_stop_dispatch(env, tmp_path) -> None:
+    tracker, store, _, _, _ = env
+    tracker.issues = [
+        github_issue(1, [READY], body="<!-- factory-plan-task: 99999999999999999999999:t1 -->"),
+        github_issue(2, [READY]),
+    ]
+    agent = FakeAgent()
+    assert (
+        len(
+            [action for action in await dispatcher(tracker, store, tmp_path, agent).poll_once() if "started" in action]
+        )
+        == 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_request_left_planning_can_be_approved_once_planning_is_off(env) -> None:
+    tracker, store, _, _, _ = env
+    item_id = ask(store, tracker, ClientKind.owner)
+    item = store.get(item_id)
+    item.state = ItemState.planning
+    store.save(item, "garage-planner", "plan_started")
+    approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=False)])
+    assert (await approvals.approve(approvals.find(item_id), "nithin")).state == ItemState.approved
