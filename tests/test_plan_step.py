@@ -11,7 +11,7 @@ from garage.report import READY, REQUEST, PLANNING, PROPOSED
 from garage.planner import Planner
 from garage.tracker import PLAN_START, IssueRecord
 from garage_sdk.api import InboxItem, IssueLink, ItemState, ClientKind, SubmitWork
-from garage.approval import Approvals, IssueWatcher, ApprovalTarget, dispatch_hold
+from garage.approval import Approvals, IssueWatcher, ApprovalError, ApprovalTarget, dispatch_hold
 from garage.dispatch import Dispatcher
 from garage.planning import PlanStep, planned, trusted, plan_text
 from garage.settings import settings_from_env
@@ -419,3 +419,30 @@ async def test_task_issues_do_not_start_once_their_request_is_declined_or_cancel
     store.save(item, "github", "github_closed")
     held = await dispatcher(tracker, store, tmp_path, FakeAgent()).poll_once()
     assert held == ["hold #2: its request #1 was cancelled", "hold #3: its request #1 was cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_approving_during_planning_is_refused_and_a_split_request_is_never_ready(env, tmp_path) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=True)])
+    comment = tracker.comment
+    refused: list[str] = []
+
+    async def approve_on_plan_comment(number: int, body: str) -> None:
+        await comment(number, body)
+        if "planned it before any work starts" in body:
+            try:
+                await approvals.approve(approvals.find(item_id), "nithin")
+            except ApprovalError as exc:
+                refused.append(str(exc))
+            await tracker.add_labels(1, [READY])  # someone adds the label on GitHub meanwhile
+
+    tracker.comment = approve_on_plan_comment
+    assert await step.poll_once() == ["planned #1 (2 tasks): filed #2, #3"]
+    assert refused and "is being planned" in refused[0]
+    assert READY not in tracker.issues[0].labels
+    agent = FakeAgent()
+    await dispatcher(tracker, store, tmp_path, agent).poll_once()
+    assert len(agent.created) == 1 and "Theme tokens" in str(agent.created[0][1]["title"])

@@ -200,10 +200,13 @@ class PlanStep:
             if latest is None:
                 return await self._rollback(item, number, created, None)
             result, state, detail = await self._publish(latest, graph, why, created)
-            if await self._still_wanted(item, number) is None:
+            final = await self._still_wanted(item, number)
+            if final is None:
                 return await self._rollback(item, number, created, None)
             for ready in created or [number]:
                 await self.tracker.add_labels(ready, [READY])
+            if created and READY in final.labels:
+                await self.tracker.remove_label(number, READY)  # a split request is built by its task issues
             await self.tracker.remove_label(number, PLANNING)
         except Exception as exc:
             return await self._rollback(item, number, created, exc)

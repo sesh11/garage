@@ -162,6 +162,8 @@ class Approvals:
         """Approve: label the issue ``garage:ready-for-fix``, mark the item approved, and wake the dispatcher."""
         async with self._lock:
             item = self.store.get(item.id) or item
+            if item.state == ItemState.planning:
+                raise ApprovalError(f"{item.id} is being planned; a coding agent starts once its plan is posted")
             if item.state not in BEFORE_APPROVAL:
                 raise ApprovalError(f"{item.id} is {item.state.value}, not waiting for approval")
             if item.issue is None:
