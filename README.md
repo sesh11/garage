@@ -150,8 +150,10 @@ configured for that project.
 3. A one-task plan labels the issue `garage:ready-for-fix`, and dispatch starts it.
 4. A larger plan files one `garage:ready-for-fix` issue per task, with `Depends on #N` lines for the order, and
    lists them on the original issue. That issue closes as completed once every task issue is.
-5. If planning fails, the issue goes back to `garage:proposed` with the error. Add `garage:ready-for-fix` to try
-   again, or close it to decline.
+5. A plan that fails partway is rolled back in full: any task issues it filed are closed, the plan is taken out of
+   the issue body, and the planning and ready labels are removed. The issue then goes back to `garage:proposed`
+   with the error; add `garage:ready-for-fix` to plan it again from scratch, or close it to decline. A request
+   declined or closed while it is being planned is rolled back the same way and stays declined.
 
 Who is trusted:
 

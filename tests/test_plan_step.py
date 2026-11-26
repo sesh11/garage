@@ -310,3 +310,49 @@ async def test_a_plan_whose_comment_fails_is_taken_out_and_replanned_after_appro
     approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=True)])
     await approvals.approve(approvals.find(item_id), "nithin")
     assert await step.poll_once() == ["planned #1 (2 tasks): filed #4, #5"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_declined_while_its_tasks_are_filed_is_rolled_back(env) -> None:
+    tracker, store, fake, step, wakes = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=True)])
+    comment = tracker.comment
+
+    async def decline_on_plan_comment(number: int, body: str) -> None:
+        await comment(number, body)
+        if "planned it before any work starts" in body:
+            await approvals.decline(approvals.find(item_id), "nithin")
+
+    tracker.comment = decline_on_plan_comment
+    assert await step.poll_once() == ["dropped the plan for #1: it was declined or closed while planning"]
+    parent, first, second = tracker.issues
+    assert parent.state == "closed" and not planned(parent.body)
+    assert [first.state, second.state] == ["closed", "closed"] and first.state_reason == "not_planned"
+    assert store.get(item_id).state == ItemState.declined
+    assert store.history(item_id)[-1]["action"] == "plan_dropped" and wakes == []
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_keeps_going_when_one_step_fails(env) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    update = tracker.update_issue
+
+    async def flaky_update(number: int, **changes) -> IssueRecord:
+        if number == 1 and "body" in changes:
+            raise RuntimeError("GitHub is down")
+        if number == 2 and changes.get("state") == "closed":
+            raise RuntimeError("cannot close #2")
+        updated: IssueRecord = await update(number, **changes)
+        return updated
+
+    tracker.update_issue = flaky_update
+    assert await step.poll_once() == ["could not plan #1: GitHub is down"]
+    assert tracker.issues[1].state == "open" and tracker.issues[2].state == "closed"
+    assert PROPOSED in tracker.issues[0].labels and PLANNING not in tracker.issues[0].labels
+    assert "Rolled back. Closed the task issues it had filed (#2, #3)" in tracker.comments[-1][1]
+    entry = store.history(item_id)[-2]
+    assert entry["action"] == "plan_failed" and entry["detail"]["not_undone"] == ["close task issue #2"]

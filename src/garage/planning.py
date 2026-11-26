@@ -10,15 +10,16 @@ two ways:
 Planning labels the issue ``garage:planning``, runs the planner (:mod:`garage.planner`) on its title and body, writes
 the plan into the issue body (so the coding agent sees it) and posts it as one comment. A one-task plan makes the
 issue ``garage:ready-for-fix``; a larger plan files one ready issue per task, with ``Depends on`` lines for the
-order, and closes this issue once every task issue is closed as completed. A failed plan sends the issue back to
-``garage:proposed``; approving it again retries.
+order, and closes this issue once every task issue is closed as completed. A plan that fails, or whose request is
+declined or closed while it is planned, is rolled back in full (:meth:`PlanStep._rollback`); after a failure the issue
+waits as ``garage:proposed`` again, and approving it plans it from scratch.
 """
 
 from __future__ import annotations
 import re
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 
 from garage_sdk import emit, scrub_text
 from garage.store import Store
@@ -176,6 +177,7 @@ class PlanStep:
         return await self._plan(item, issue, is_trusted)
 
     async def _plan(self, item: InboxItem, issue: IssueRecord, is_trusted: bool) -> str:
+        """Plan one request; any failure, or a decline or close meanwhile, goes through :meth:`_rollback`."""
         number = issue.number
         approved = item.state == ItemState.approved
         await self.tracker.add_labels(number, [PLANNING])
@@ -185,43 +187,43 @@ class PlanStep:
         item.state = ItemState.planning
         self.store.save(item, PLANNER_CLIENT, "plan_started", {"trusted": is_trusted, "approved": approved})
         emit("factory.plan_started", "factory", item=item.id, issue=number, trusted=is_trusted)
+        why = "Approved" if approved else ("Trusted request" if is_trusted else "Request")
+        created: list[int] = []
         try:
             if self._planner is None:
                 self._planner = self._planner_factory()
             graph = await self._planner.plan(plan_text(issue))
+            latest = await self._still_wanted(item, number)
+            if latest is None:
+                return await self._rollback(item, number, created, None)
+            result, state, detail = await self._publish(latest, graph, why, created)
+            if await self._still_wanted(item, number) is None:
+                return await self._rollback(item, number, created, None)
         except Exception as exc:
-            return await self._failed(item, number, exc)
-        current = self.store.get(item.id)
-        latest = await self.tracker.get_issue(number)
-        if current is None or current.state != ItemState.planning or latest is None or latest.state != "open":
-            if latest is not None and PLANNING in latest.labels:
-                await self.tracker.remove_label(number, PLANNING)
-            state = current.state.value if current is not None else "removed"
-            logger.info("Dropped the plan for #%d: it changed while planning (%s)", number, state)
-            return f"dropped the plan for #{number}: it was declined or closed while planning"
-        issue = latest
-        why = "Approved" if approved else ("Trusted request" if is_trusted else "Request")
-        created: list[int] = []
-        try:
-            result = await self._publish(item, issue, graph, why, created)
-        except Exception as exc:
-            for task_issue in created:
-                try:
-                    await self.tracker.update_issue(task_issue, state="closed", state_reason="not_planned")
-                except Exception as close_error:
-                    logger.warning("Could not close task issue #%d: %s", task_issue, close_error)
-            await self._unplan(number)
-            return await self._failed(item, number, exc)
+            return await self._rollback(item, number, created, exc)
+        item.state = state
+        self.store.save(item, PLANNER_CLIENT, "planned", detail)
         self._planned.discard(item.id)
         emit("factory.planned", "factory", item=item.id, issue=number, tasks=len(graph.tasks))
         if self.on_ready is not None:
             self.on_ready()
         return result
 
+    async def _still_wanted(self, item: InboxItem, number: int) -> IssueRecord | None:
+        """Return the open issue while its item is still being planned; None once it was declined or closed."""
+        current = self.store.get(item.id)
+        if current is None or current.state != ItemState.planning:
+            return None
+        latest = await self.tracker.get_issue(number)
+        return latest if latest is not None and latest.state == "open" else None
+
     async def _publish(
-        self, item: InboxItem, issue: IssueRecord, graph: TaskGraph, why: str, created: list[int]
-    ) -> str:
-        """Post the plan and make its work ready; task issues filed are appended to ``created`` as they are filed."""
+        self, issue: IssueRecord, graph: TaskGraph, why: str, created: list[int]
+    ) -> tuple[str, ItemState, dict[str, object]]:
+        """Post the plan and make its work ready, appending each task issue to ``created`` as it is filed.
+
+        Returns what was done, and the item's new state and decision-log detail, which the caller saves.
+        """
         number = issue.number
         rendered = scrub_text(render_plan(graph)).strip()
         ordered = graph.order()
@@ -234,58 +236,87 @@ class PlanStep:
                 f"{why}: planned it before any work starts.\n\n{rendered}\n\nLabeled `{READY}`. A coding agent "
                 "starts on the next dispatch poll.",
             )
-            item.state = ItemState.approved
-            self.store.save(item, PLANNER_CLIENT, "planned", {"tasks": 1, "issues": []})
-            result = f"planned #{number} (1 task): ready"
-        else:
-            numbers: dict[str, int] = {}
-            for task in ordered:
-                filed = await self.tracker.create_issue(
-                    scrub_text(task.title)[:120], task_body(graph, task.id, issue, numbers), [READY]
-                )
-                numbers[task.id] = filed.number
-                created.append(filed.number)
-            listing = "\n".join(f"- `{task.id}` #{numbers[task.id]}: {scrub_text(task.title)}" for task in ordered)
-            await self.tracker.update_issue(
-                number, body=with_plan(issue.body, f"### Plan\n\n{rendered}\n\nTask issues:\n{listing}")
+            return f"planned #{number} (1 task): ready", ItemState.approved, {"tasks": 1, "issues": []}
+        numbers: dict[str, int] = {}
+        for task in ordered:
+            filed = await self.tracker.create_issue(
+                scrub_text(task.title)[:120], task_body(graph, task.id, issue, numbers), [READY]
             )
-            await self.tracker.remove_label(number, PLANNING)
-            await self.tracker.comment(
-                number,
-                f"{why}: planned it before any work starts.\n\n{rendered}\n\nFiled one `{READY}` issue per task:\n"
-                f"{listing}\n\nEach starts once the tasks it depends on are closed as completed. This issue closes "
-                "when every task issue is.",
-            )
-            item.state = ItemState.running
-            self.store.save(item, PLANNER_CLIENT, "planned", {"tasks": len(ordered), "issues": list(numbers.values())})
-            result = f"planned #{number} ({len(ordered)} tasks): filed " + ", ".join(
-                f"#{value}" for value in numbers.values()
-            )
-        return result
-
-    async def _unplan(self, number: int) -> None:
-        """Take a half-published plan back out of the issue body, so approving again plans it afresh."""
-        try:
-            issue = await self.tracker.get_issue(number)
-            if issue is not None and planned(issue.body):
-                await self.tracker.update_issue(number, body=_PLAN_BLOCK.sub("", issue.body).rstrip() + "\n")
-        except Exception as exc:
-            logger.warning("Could not remove the plan from #%d: %s", number, exc)
-
-    async def _failed(self, item: InboxItem, number: int, error: Exception) -> str:
-        detail = scrub_text(str(error) or type(error).__name__)[:500]
-        logger.warning("Could not plan #%d: %s", number, detail)
+            numbers[task.id] = filed.number
+            created.append(filed.number)
+        listing = "\n".join(f"- `{task.id}` #{numbers[task.id]}: {scrub_text(task.title)}" for task in ordered)
+        await self.tracker.update_issue(
+            number, body=with_plan(issue.body, f"### Plan\n\n{rendered}\n\nTask issues:\n{listing}")
+        )
         await self.tracker.remove_label(number, PLANNING)
-        await self.tracker.add_labels(number, [PROPOSED])
         await self.tracker.comment(
             number,
-            f"Garage could not plan this: {detail}\n\nIt waits as `{PROPOSED}`. Add `{READY}` to plan it again, or "
-            "close this issue to decline.",
+            f"{why}: planned it before any work starts.\n\n{rendered}\n\nFiled one `{READY}` issue per task:\n"
+            f"{listing}\n\nEach starts once the tasks it depends on are closed as completed. This issue closes "
+            "when every task issue is.",
+        )
+        refs = ", ".join(f"#{value}" for value in numbers.values())
+        detail: dict[str, object] = {"tasks": len(ordered), "issues": list(numbers.values())}
+        return f"planned #{number} ({len(ordered)} tasks): filed {refs}", ItemState.running, detail
+
+    async def _rollback(self, item: InboxItem, number: int, created: list[int], error: Exception | None) -> str:
+        """Undo a plan that did not finish, so nothing it filed can start and planning can begin again cleanly.
+
+        Every step is attempted even if an earlier one fails: close the task issues already filed, take the plan out
+        of the issue body and drop ``garage:planning`` and ``garage:ready-for-fix``. After an ``error`` the request
+        goes back to ``garage:proposed`` to be approved again; with no error it was declined or closed meanwhile,
+        which stands.
+        """
+        undone: list[str] = []
+
+        async def attempt(step: str, action: Awaitable[object]) -> None:
+            try:
+                await action
+            except Exception as exc:
+                logger.warning("Rollback of #%d could not %s: %s", number, step, exc)
+                undone.append(step)
+
+        for task_issue in created:
+            await attempt(
+                f"close task issue #{task_issue}",
+                self.tracker.update_issue(task_issue, state="closed", state_reason="not_planned"),
+            )
+        issue: IssueRecord | None = None
+        try:
+            issue = await self.tracker.get_issue(number)
+        except Exception as exc:
+            logger.warning("Rollback of #%d could not read the issue: %s", number, exc)
+            undone.append("read the issue")
+        if issue is not None and planned(issue.body):
+            body = _PLAN_BLOCK.sub("", issue.body).rstrip() + "\n"
+            await attempt("remove the plan", self.tracker.update_issue(number, body=body))
+        labels = issue.labels if issue is not None else [PLANNING, READY]
+        for label in (PLANNING, READY):
+            if label in labels:
+                await attempt(f"remove {label}", self.tracker.remove_label(number, label))
+        detail: dict[str, object] = {"closed": created}
+        if undone:
+            detail["not_undone"] = undone
+        if error is None:
+            self.store.save(self.store.get(item.id) or item, PLANNER_CLIENT, "plan_dropped", detail)
+            emit("factory.plan_dropped", "factory", item=item.id, issue=number)
+            return f"dropped the plan for #{number}: it was declined or closed while planning"
+        reason = scrub_text(str(error) or type(error).__name__)[:500]
+        logger.warning("Could not plan #%d: %s", number, reason)
+        await attempt(f"add {PROPOSED}", self.tracker.add_labels(number, [PROPOSED]))
+        closed = f" Closed the task issues it had filed ({', '.join(f'#{n}' for n in created)})." if created else ""
+        await attempt(
+            "comment",
+            self.tracker.comment(
+                number,
+                f"Garage could not plan this: {reason}\n\nRolled back.{closed} It waits as `{PROPOSED}`. Add "
+                f"`{READY}` to plan it again from scratch, or close this issue to decline.",
+            ),
         )
         item.state = ItemState.awaiting_approval
-        self.store.save(item, PLANNER_CLIENT, "plan_failed", {"error": detail})
-        emit("factory.plan_failed", "factory", "warning", item=item.id, issue=number, error=detail)
-        return f"could not plan #{number}: {detail}"
+        self.store.save(item, PLANNER_CLIENT, "plan_failed", {"error": reason, **detail})
+        emit("factory.plan_failed", "factory", "warning", item=item.id, issue=number, error=reason)
+        return f"could not plan #{number}: {reason}"
 
     async def _finish(self, item: InboxItem) -> str | None:
         """Close a split plan's issue once every task issue is closed as completed."""
