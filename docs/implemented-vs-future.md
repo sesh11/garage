@@ -25,6 +25,10 @@
   project's repository every 60 seconds with ETags and skips pull requests, closed issues, issues an agent already
   has, below-threshold incidents, and issues older than its start. Dispatch starts only approved issues and never
   one declined in Garage. `[policy].needs_approval` without `"triage"` turns the gate off.
+- Plan step: every request is planned before work starts (`src/garage/planning.py`, `[planner].requests`). Trusted
+  requests (`[policy].trusted` client kinds, the repository owner and `[policy].trusted_authors` on GitHub) are
+  planned at once; others after approval. A one-task plan makes the issue ready; a larger plan files one ready issue
+  per task with `Depends on` lines and closes the original once they are all done.
 - Order: `Depends on #N` lines in an issue body (`src/garage/dependencies.py`) hold a ready issue until every
   same-repository dependency is closed as completed; declined, missing, cross-repository, self and cyclic
   dependencies hold it with a reason. Garage comments once per held issue.
@@ -48,8 +52,9 @@
 - Automatic routing: Garage does not guess an ask's project. Asks with no project wait in `needs_repo` until
   `garage assign` (or `POST /v1/items/{id}/project`) names one.
 - Projects spanning several repositories. Each project has one repository; the API's `repos` list leaves room.
-- The PM/design (triage and plan) step. Approved items go straight to dispatch; `next_step()` in
-  `src/garage/approval.py` is the hook where a plan step will slot in before dispatch.
+- Triage (a PM pass deciding what matters) and approving a plan before it runs. The plan step
+  (`src/garage/planning.py`) plans every request before dispatch and starts trusted ones without approval; the plan
+  is posted for reading, not approval.
 - GitHub webhooks for instant intake; the watcher polls instead, since webhooks need Garage reachable from the
   internet.
 - Approval for release (`"release"` in `[policy].needs_approval` is not used yet).

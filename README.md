@@ -30,9 +30,10 @@ ACU (Agent Compute Unit) limit, a local incidents UI, a loopback request bridge 
 [projects](#projects): one `garage serve` can work several repositories, tagging every item and run with its project,
 and an [approval gate](#approval-nothing-starts-until-you-say-yes): new issues wait as `garage:proposed` until you
 approve them on GitHub, on the dashboard, or in the terminal, and a [planner](#planner-feature-text-to-task-graph)
-that turns any feature description into a graph of one-PR tasks. A manifest is the app's `garage.toml` configuration file.
+that turns any feature description into a graph of one-PR tasks, and a [plan step](#plan-step-every-request-is-planned-first)
+that plans every request before work starts, running trusted requests without approval. A manifest is the app's `garage.toml` configuration file.
 
-**Not yet:** the triage and plan step (a PM/design pass posted on the issue before dispatch), release/deploy and
+**Not yet:** triage (a PM pass deciding what matters) and approving a plan before it runs, release/deploy and
 confirmation, a test runner, GitHub sign-in and automatic routing of asks to a project, hosted deployment, or hosted CI (continuous integration). Local checks exist.
 Test-kit commands currently become prompt instructions, not tests Garage executes.
 See [implemented versus future work](docs/implemented-vs-future.md).
@@ -132,9 +133,46 @@ calls Garage the moment an issue changes), which needs Garage reachable from the
 
 Dispatch (`garage dispatch`, or `garage serve` with `GARAGE_DISPATCH=1`) only starts approved issues: ones labeled
 `garage:ready-for-fix`, and never one Garage recorded as declined. Approving from the dashboard wakes the dispatcher
-in the same `garage serve` immediately; a GitHub or terminal approval wakes it on the watcher's next poll. An approved item is also where a future plan step will fit: `next_step()` in
-`src/garage/approval.py` returns `"dispatch"` today, and a PM/design step would return `"plan"` there and hold the
-issue until its plan is approved.
+in the same `garage serve` immediately; a GitHub or terminal approval wakes it on the watcher's next poll. With the
+[plan step](#plan-step-every-request-is-planned-first) on, an approved issue is planned first, and dispatch holds a
+tracked issue until its plan is in the issue body.
+
+### Plan step: every request is planned first
+
+Every request (a GitHub issue, a `garage ask`, an API or bridge item, or an incident) is planned before any coding
+agent starts on it. `garage serve` runs one plan step per project, using the [planner](#planner-feature-text-to-task-graph)
+configured for that project.
+
+1. **Trusted** requests are planned right away, with no approval. **Untrusted** ones wait as `garage:proposed`, as
+   before, and are planned once you approve them.
+2. Planning labels the issue `garage:planning`, runs the planner on the issue's title and body, writes the plan into
+   the issue body (so the coding agent sees it) and posts it as one comment.
+3. A one-task plan labels the issue `garage:ready-for-fix`, and dispatch starts it.
+4. A larger plan files one `garage:ready-for-fix` issue per task, with `Depends on #N` lines for the order, and
+   lists them on the original issue. That issue closes as completed once every task issue is.
+5. A plan that fails partway is rolled back in full: any task issues it filed are closed, the plan is taken out of
+   the issue body, and the planning and ready labels are removed. The issue then goes back to `garage:proposed`
+   with the error; add `garage:ready-for-fix` to plan it again from scratch, or close it to decline. A request
+   declined or closed while it is being planned is rolled back the same way and stays declined.
+
+Who is trusted:
+
+| Request | Trusted when | Setting |
+|---|---|---|
+| `garage ask`, the dashboard and the bridge, registered clients | the client kind is listed (default `owner` and `app`) | `[policy] trusted` |
+| Incidents from the monitor (`agent`) | only if you add `agent` | `[policy] trusted` |
+| A GitHub issue someone opened | the author is the repository owner or listed | `[policy] trusted_authors` |
+
+```toml
+[policy]
+trusted = ["owner", "app"]          # client kinds: owner, app, agent, public
+trusted_authors = ["a-teammate"]    # GitHub logins; the repository owner is always trusted
+
+[planner]
+requests = true                     # plan every request; false (or GARAGE_PLAN_REQUESTS=0) dispatches approved work as before
+```
+
+The plan step needs `GARAGE_GITHUB_TOKEN`. Untrusted text reaches the planner only after you approve it.
 
 ### Order: "Depends on #N"
 

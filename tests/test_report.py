@@ -4,7 +4,14 @@ import pytest
 from conftest import FakeTracker
 
 from garage.report import REQUEST, INCIDENT, OBSERVED, PROPOSED, RequestLogger, IncidentReporter
-from garage.tracker import ATTEMPTS_END, ATTEMPTS_START, replace_attempt_block
+from garage.tracker import (
+    PLAN_END,
+    PLAN_START,
+    ATTEMPTS_END,
+    ATTEMPTS_START,
+    replace_plan_block,
+    replace_attempt_block,
+)
 from garage.requests import Request
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
@@ -57,6 +64,18 @@ async def test_incident_updates_preserve_attempt_context_without_redundant_write
     assert (await reporter.sync([changed]))[0].startswith("update #1")
     assert tracker.issues[0].body.startswith(block)
     assert tracker.issues[0].body.count(ATTEMPTS_START) == 1
+
+
+@pytest.mark.asyncio
+async def test_incident_updates_keep_the_plan() -> None:
+    tracker = FakeTracker()
+    reporter = IncidentReporter(tracker, min_update_interval=timedelta(0))
+    incident = sample_incident()
+    await reporter.sync([incident])
+    plan = f"{PLAN_START}\n### Plan\n1. [t1] Fix it\n{PLAN_END}"
+    tracker.issues[0].body = replace_plan_block(tracker.issues[0].body, plan)
+    assert (await reporter.sync([incident.model_copy(update={"count": 3})]))[0].startswith("update #1")
+    assert tracker.issues[0].body.rstrip().endswith(plan) and tracker.issues[0].body.count(PLAN_START) == 1
 
 
 @pytest.mark.asyncio

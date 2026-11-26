@@ -43,6 +43,7 @@ from garage.approval import (
     initial_state,
 )
 from garage.dispatch import OUTPUT_SCHEMA, Dispatcher, build_fix_prompt
+from garage.planning import PlanStep, trusted
 from garage.projects import only, project_info, select_projects
 from garage.requests import Request, BridgeProject, RequestBridge
 from garage.settings import GarageSettings, settings_from_env
@@ -193,7 +194,9 @@ def build_dispatcher(settings: GarageSettings, *, dry_run: bool = False, offline
         dry_run=dry_run,
         legacy_ledger_path=_legacy_ledger_path(settings),
         project=settings.project or None,
-        hold=None if offline else dispatch_hold(Store(settings.data_dir / "garage.db"), settings.repo),
+        hold=None
+        if offline
+        else dispatch_hold(Store(settings.data_dir / "garage.db"), settings.repo, settings.plan_requests),
         max_open=settings.max_open,
         max_attempts=settings.max_attempts,
     )
@@ -282,6 +285,17 @@ def _loopback_host(host: str) -> bool:
         return False
 
 
+def _wake_all(pokes: Sequence[Callable[[], None]]) -> Callable[[], None] | None:
+    if not pokes:
+        return None
+
+    def wake() -> None:
+        for poke in pokes:
+            poke()
+
+    return wake
+
+
 def _serve(
     projects: GarageSettings | Sequence[GarageSettings], host: str, port: int, *, require_signals: bool = True
 ) -> int:
@@ -298,6 +312,7 @@ def _serve(
     reporters: list[IncidentReporter] = []
     dispatchers: list[Dispatcher] = []
     watchers: list[IssueWatcher] = []
+    plan_steps: list[PlanStep] = []
     targets: list[ApprovalTarget] = []
     bridge_projects: list[BridgeProject] = []
     ui_projects: list[UiProject] = []
@@ -321,13 +336,19 @@ def _serve(
         dispatcher = build_dispatcher(settings)
         if dispatcher is not None:
             dispatchers.append(dispatcher)
-        wake = dispatcher.poke if dispatcher is not None else None
+        plan_step = build_plan_step(settings, store, on_ready=dispatcher.poke if dispatcher is not None else None)
+        if plan_step is not None:
+            plan_steps.append(plan_step)
+        elif settings.plan_requests and settings.github_token is None:
+            logger.warning("Planning requests needs GARAGE_GITHUB_TOKEN; approved work waits for its plan.")
+        wake = _wake_all([step.poke for step in (dispatcher, plan_step) if step is not None])
         targets.append(
             ApprovalTarget(
                 settings.project or None,
                 settings.repo,
                 GitHubIssues(settings.repo, settings.github_token) if settings.github_token else None,
                 on_approved=wake,
+                plans=settings.plan_requests,
             )
         )
         if settings.intake:
@@ -372,6 +393,8 @@ def _serve(
             tasks.append(asyncio.create_task(dispatcher.run()))
         for watcher in watchers:
             tasks.append(asyncio.create_task(watcher.run()))
+        for plan_step in plan_steps:
+            tasks.append(asyncio.create_task(plan_step.run()))
 
     async def stop_background() -> None:
         for task in tasks:
@@ -522,6 +545,7 @@ def build_approvals(projects: Sequence[GarageSettings], store: Store) -> Approva
                 project.project or None,
                 project.repo,
                 GitHubIssues(project.repo, project.github_token) if project.github_token else None,
+                plans=project.plan_requests,
             )
             for project in projects
         ],
@@ -539,6 +563,7 @@ def build_watcher(
     """Watch one project's repository for new issues; needs GARAGE_GITHUB_TOKEN."""
     if not settings.github_token:
         return None
+    policy = settings.manifest.policy
     return IssueWatcher(
         store,
         GitHubIssues(settings.repo, settings.github_token),
@@ -549,6 +574,25 @@ def build_watcher(
         dry_run=dry_run,
         rescan_s=rescan_s,
         on_approved=on_approved,
+        plans=settings.plan_requests,
+        trusts=lambda item, issue: trusted(item, issue, policy, settings.repo),
+    )
+
+
+def build_plan_step(
+    settings: GarageSettings, store: Store, *, on_ready: Callable[[], None] | None = None
+) -> PlanStep | None:
+    """Plan one project's requests before work starts, when ``[planner].requests`` is on; needs GARAGE_GITHUB_TOKEN."""
+    if not settings.plan_requests or not settings.github_token:
+        return None
+    return PlanStep(
+        store,
+        GitHubIssues(settings.repo, settings.github_token),
+        lambda: build_planner(settings),
+        project=settings.project or None,
+        policy=settings.manifest.policy,
+        on_ready=on_ready,
+        interval_s=settings.intake_interval_s,
     )
 
 

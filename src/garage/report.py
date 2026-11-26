@@ -13,7 +13,14 @@ from datetime import datetime, timezone, timedelta
 from collections.abc import Callable, Sequence
 
 from garage_sdk import DROPPED_KEYS, emit, scrub_text
-from garage.tracker import Tracker, IssueRecord, extract_attempt_block, replace_attempt_block
+from garage.tracker import (
+    Tracker,
+    IssueRecord,
+    extract_plan_block,
+    replace_plan_block,
+    extract_attempt_block,
+    replace_attempt_block,
+)
 from garage_sdk.events import Event
 from garage.incidents.base import Incident
 
@@ -29,6 +36,7 @@ REQUEST = "garage:request"
 OBSERVED = "garage:observed"
 READY = "garage:ready-for-fix"
 PROPOSED = "garage:proposed"
+PLANNING = "garage:planning"
 FIXING = "garage:fixing"
 DISPATCHED = "garage:dispatched"
 BLOCKED = "garage:blocked"
@@ -38,6 +46,7 @@ LABELS: dict[str, tuple[str, str]] = {
     REQUEST: ("1d76db", "Fix or feature request submitted through the bridge"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),
     PROPOSED: ("bfd4f2", "Waiting for the owner's approval; add garage:ready-for-fix to approve, close to decline"),
+    PLANNING: ("fef2c0", "Garage is planning it: tasks first, then a coding agent"),
     READY: ("d93f0b", "Approved: ready for a coding-agent fix session"),
     FIXING: ("0e8a16", "A Devin session is working on it"),
     DISPATCHED: ("c5def5", "A Devin fix session was started; remove to allow another"),
@@ -255,6 +264,9 @@ class IncidentReporter:
         attempts = extract_attempt_block(issue.body)
         if attempts is not None:
             body = replace_attempt_block(body, attempts)
+        plan = extract_plan_block(issue.body)
+        if plan is not None:
+            body = replace_plan_block(body, plan)
         became_ready = count >= incident.threshold and not {READY, PROPOSED} & set(issue.labels)
         label = self.ready_label
         if self.dry_run:

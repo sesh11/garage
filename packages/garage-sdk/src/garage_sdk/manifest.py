@@ -78,18 +78,29 @@ class DispatchSection(BaseModel):
 
 
 class PlannerSection(BaseModel):
-    """Which agent turns a feature description into a task graph; ``model`` unset means the agent's default."""
+    """Which agent turns a feature description into a task graph; ``model`` unset means the agent's default.
+
+    ``requests`` plans every request before work starts (``garage serve``).
+    """
 
     agent: str = "claude-code"
     model: str | None = None
+    requests: bool = True
 
 
 class PolicySection(BaseModel):
-    """Human approvals and automation policy; auto_accept is not acted on in v0."""
+    """Human approvals and automation policy; auto_accept is not acted on in v0.
+
+    ``trusted`` lists the client kinds (``owner``, ``app``, ``agent``, ``public``) whose requests are planned and
+    started without approval; ``trusted_authors`` lists GitHub logins whose own issues are trusted (the repository
+    owner always is).
+    """
 
     needs_approval: list[str] = Field(default_factory=lambda: ["triage", "plan", "release"])
     auto_release: bool = False
     auto_accept: list[str] = Field(default_factory=list)
+    trusted: list[str] = Field(default_factory=lambda: ["owner", "app"])
+    trusted_authors: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_human_plan_and_release(self) -> "PolicySection":
