@@ -406,3 +406,16 @@ async def test_a_plan_left_half_published_by_a_restart_is_rolled_back(env) -> No
     assert await step.poll_once() == ["could not plan #1: Garage stopped while publishing"]
     assert not planned(tracker.issues[0].body) and tracker.issues[0].labels == [REQUEST, PROPOSED]
     assert store.get(item_id).state == ItemState.awaiting_approval
+
+
+@pytest.mark.asyncio
+async def test_task_issues_do_not_start_once_their_request_is_declined_or_cancelled(env, tmp_path) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    await step.poll_once()
+    item = store.get(item_id)
+    item.state = ItemState.cancelled
+    store.save(item, "github", "github_closed")
+    held = await dispatcher(tracker, store, tmp_path, FakeAgent()).poll_once()
+    assert held == ["hold #2: its request #1 was cancelled", "hold #3: its request #1 was cancelled"]

@@ -69,10 +69,16 @@ def next_step(item: InboxItem, plans: bool = False) -> str:
 def dispatch_hold(store: Store, repo: str, plans: bool = False) -> Callable[[IssueRecord], str | None]:
     """Return the dispatcher's last check: a reason to hold a ready issue back, or None to dispatch it.
 
-    With ``plans``, an issue Garage tracks waits until its plan is written into its body.
+    With ``plans``, an issue Garage tracks waits until its plan is written into its body. A plan's task issue never
+    starts once the request it came from was declined or cancelled.
     """
 
     def hold(issue: IssueRecord) -> str | None:
+        task = issue.marker("plan-task")
+        parent_number = task.split(":", 1)[0] if task else ""
+        parent = store.by_issue(repo, int(parent_number)) if parent_number.isdigit() else None
+        if parent is not None and parent.state in {ItemState.declined, ItemState.cancelled}:
+            return f"its request #{parent_number} was {parent.state.value}"
         item = store.by_issue(repo, issue.number)
         if item is None:
             return None
