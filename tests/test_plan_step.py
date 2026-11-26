@@ -475,3 +475,14 @@ async def test_a_request_left_planning_can_be_approved_once_planning_is_off(env)
     store.save(item, "garage-planner", "plan_started")
     approvals = Approvals(store, [ApprovalTarget("ambient-home", REPO, tracker, plans=False)])
     assert (await approvals.approve(approvals.find(item_id), "nithin")).state == ItemState.approved
+
+
+def test_terminal_approvals_know_when_planning_is_on(tmp_path, monkeypatch) -> None:
+    from garage.cli import build_approvals
+
+    monkeypatch.setenv("GARAGE_GITHUB_TOKEN", "fake")
+    settings = settings_from_env(example_manifest())
+    assert [target.plans for target in build_approvals([settings], Store(tmp_path / "garage.db")).targets] == [True]
+    monkeypatch.setenv("GARAGE_PLAN_REQUESTS", "0")
+    settings = settings_from_env(example_manifest())
+    assert [target.plans for target in build_approvals([settings], Store(tmp_path / "garage.db")).targets] == [False]

@@ -545,6 +545,7 @@ def build_approvals(projects: Sequence[GarageSettings], store: Store) -> Approva
                 project.project or None,
                 project.repo,
                 GitHubIssues(project.repo, project.github_token) if project.github_token else None,
+                plans=project.plan_requests,
             )
             for project in projects
         ],
