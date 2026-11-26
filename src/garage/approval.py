@@ -364,6 +364,8 @@ class IssueWatcher:
             return "already handed to an agent"
         if OBSERVED in issue.labels and PROPOSED not in issue.labels and READY not in issue.labels:
             return "incident below its threshold"
+        if issue.marker("plan-task") and READY not in issue.labels:
+            return "a plan task Garage is still filing"
         return None
 
     async def _apply(self, issue: IssueRecord, baseline: datetime) -> str | None:
@@ -465,7 +467,7 @@ class IssueWatcher:
             if item.state == ItemState.awaiting_approval and PROPOSED not in issue.labels:
                 await self._propose(item, issue)
             return f"{tag} reopened on GitHub: {before.value} -> {item.state.value}"
-        if READY in issue.labels and item.state in BEFORE_APPROVAL:
+        if READY in issue.labels and item.state in BEFORE_APPROVAL - {ItemState.planning}:
             item.state = ItemState.approved
             if self.dry_run:
                 return f"{tag} approved on GitHub: {before.value} -> approved"

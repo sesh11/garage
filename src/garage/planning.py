@@ -68,7 +68,7 @@ def task_body(graph: TaskGraph, task_id: str, parent: IssueRecord, numbers: dict
     """Render the issue body for one task of a plan; every task also waits on the parent's own dependencies."""
     task = next(task for task in graph.tasks if task.id == task_id)
     lines = [
-        f"<!-- garage-plan-task: {parent.number}:{task.id} -->",
+        f"<!-- factory-plan-task: {parent.number}:{task.id} -->",
         f"Task `{task.id}` of the plan on #{parent.number}. Filed automatically by garage.",
         "",
         scrub_text(task.body).strip(),
@@ -169,6 +169,9 @@ class PlanStep:
         if issue is None or issue.state != "open" or {DISPATCHED, FIXING} & set(issue.labels):
             return None
         if planned(issue.body):
+            if item.state == ItemState.planning:
+                # Garage stopped after writing the plan but before saving it: start over cleanly.
+                return await self._rollback(item, issue.number, [], RuntimeError("Garage stopped while publishing"))
             self._planned.add(item.id)
             return None
         is_trusted = trusted(item, issue, self.policy, self.tracker.repo)
@@ -199,6 +202,9 @@ class PlanStep:
             result, state, detail = await self._publish(latest, graph, why, created)
             if await self._still_wanted(item, number) is None:
                 return await self._rollback(item, number, created, None)
+            for ready in created or [number]:
+                await self.tracker.add_labels(ready, [READY])
+            await self.tracker.remove_label(number, PLANNING)
         except Exception as exc:
             return await self._rollback(item, number, created, exc)
         item.state = state
@@ -210,9 +216,9 @@ class PlanStep:
         return result
 
     async def _still_wanted(self, item: InboxItem, number: int) -> IssueRecord | None:
-        """Return the open issue while its item is still being planned; None once it was declined or closed."""
+        """Return the open issue while its item is still wanted; None once it was declined, cancelled or closed."""
         current = self.store.get(item.id)
-        if current is None or current.state != ItemState.planning:
+        if current is None or current.state in {ItemState.declined, ItemState.cancelled, ItemState.done}:
             return None
         latest = await self.tracker.get_issue(number)
         return latest if latest is not None and latest.state == "open" else None
@@ -220,17 +226,16 @@ class PlanStep:
     async def _publish(
         self, issue: IssueRecord, graph: TaskGraph, why: str, created: list[int]
     ) -> tuple[str, ItemState, dict[str, object]]:
-        """Post the plan and make its work ready, appending each task issue to ``created`` as it is filed.
+        """Post the plan and file its task issues, appending each to ``created`` as it is filed.
 
-        Returns what was done, and the item's new state and decision-log detail, which the caller saves.
+        Nothing is labeled ``garage:ready-for-fix`` here, so no agent can start before the caller checks once more
+        that the request is still wanted. Returns what was done, and the item's new state and decision-log detail.
         """
         number = issue.number
         rendered = scrub_text(render_plan(graph)).strip()
         ordered = graph.order()
         if len(ordered) == 1:
             await self.tracker.update_issue(number, body=with_plan(issue.body, f"### Plan\n\n{rendered}"))
-            await self.tracker.add_labels(number, [READY])
-            await self.tracker.remove_label(number, PLANNING)
             await self.tracker.comment(
                 number,
                 f"{why}: planned it before any work starts.\n\n{rendered}\n\nLabeled `{READY}`. A coding agent "
@@ -240,7 +245,7 @@ class PlanStep:
         numbers: dict[str, int] = {}
         for task in ordered:
             filed = await self.tracker.create_issue(
-                scrub_text(task.title)[:120], task_body(graph, task.id, issue, numbers), [READY]
+                scrub_text(task.title)[:120], task_body(graph, task.id, issue, numbers), []
             )
             numbers[task.id] = filed.number
             created.append(filed.number)
@@ -248,7 +253,6 @@ class PlanStep:
         await self.tracker.update_issue(
             number, body=with_plan(issue.body, f"### Plan\n\n{rendered}\n\nTask issues:\n{listing}")
         )
-        await self.tracker.remove_label(number, PLANNING)
         await self.tracker.comment(
             number,
             f"{why}: planned it before any work starts.\n\n{rendered}\n\nFiled one `{READY}` issue per task:\n"

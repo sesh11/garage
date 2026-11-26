@@ -356,3 +356,53 @@ async def test_a_rollback_keeps_going_when_one_step_fails(env) -> None:
     assert "Rolled back. Closed the task issues it had filed (#2, #3)" in tracker.comments[-1][1]
     entry = store.history(item_id)[-2]
     assert entry["action"] == "plan_failed" and entry["detail"]["not_undone"] == ["close task issue #2"]
+
+
+@pytest.mark.asyncio
+async def test_no_task_is_ready_before_the_last_check_and_an_approval_meanwhile_is_kept(env, tmp_path) -> None:
+    tracker, store, fake, step, _ = env
+    fake.answers = [TWO_TASKS]
+    item_id = ask(store, tracker, ClientKind.owner)
+    comment = tracker.comment
+    seen: list[list[str]] = []
+
+    async def approve_on_plan_comment(number: int, body: str) -> None:
+        await comment(number, body)
+        if "planned it before any work starts" in body:
+            seen.extend(issue.labels for issue in tracker.issues[1:])
+            item = store.get(item_id)
+            item.state = ItemState.approved
+            store.save(item, "github", "approve")
+
+    tracker.comment = approve_on_plan_comment
+    assert await step.poll_once() == ["planned #1 (2 tasks): filed #2, #3"]
+    assert seen == [[], []] and [issue.labels for issue in tracker.issues[1:]] == [[READY], [READY]]
+    assert store.get(item_id).state == ItemState.running
+
+
+@pytest.mark.asyncio
+async def test_watcher_leaves_planning_items_and_unfinished_task_issues_to_the_plan_step(env, tmp_path) -> None:
+    tracker, store, _, _, _ = env
+    watcher = IssueWatcher(store, tracker, tmp_path / "intake.json", project="ambient-home", clock=lambda: START)
+    item_id = ask(store, tracker, ClientKind.owner)
+    item = store.get(item_id)
+    item.state = ItemState.planning
+    store.save(item, "garage-planner", "plan_started")
+    tracker.issues[0].labels = [REQUEST, PLANNING, READY]
+    tracker.issues.append(github_issue(2, [], body="<!-- factory-plan-task: 1:t1 -->\nTask"))
+    assert await watcher.poll_once() == []
+    assert store.get(item_id).state == ItemState.planning and store.by_issue(REPO, 2) is None
+
+
+@pytest.mark.asyncio
+async def test_a_plan_left_half_published_by_a_restart_is_rolled_back(env) -> None:
+    tracker, store, _, step, _ = env
+    item_id = ask(store, tracker, ClientKind.owner)
+    item = store.get(item_id)
+    item.state = ItemState.planning
+    store.save(item, "garage-planner", "plan_started")
+    tracker.issues[0].labels = [REQUEST, PLANNING]
+    tracker.issues[0].body = f"> Add a night mode\n\n{PLAN_START}\nplan\n<!-- garage-plan-end -->\n"
+    assert await step.poll_once() == ["could not plan #1: Garage stopped while publishing"]
+    assert not planned(tracker.issues[0].body) and tracker.issues[0].labels == [REQUEST, PROPOSED]
+    assert store.get(item_id).state == ItemState.awaiting_approval
